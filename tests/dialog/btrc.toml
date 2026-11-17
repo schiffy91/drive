@@ -1,0 +1,5 @@
+manifest-version = 1
+[package]
+name = "drive_dialog_tests"
+[dependencies]
+testkit = { path = "../testkit" }
