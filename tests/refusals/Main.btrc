@@ -2,10 +2,11 @@ import Library.CLI;
 import testkit.Lab;
 import ../Fixture.btrc;
 
-// What the client does when it is told no. The disk fills while a pinned folder downloads, the Drive has no room
-// for an upload, and the sign-in is withdrawn. Each time: nothing is shown as complete that is not, nothing is
-// deleted on either side, the engine says what is wrong and waits instead of trying over and over, and it
-// carries on by itself once the reason is gone.
+// What the client does when it is told no, or told something it cannot be sure of. The disk fills while a pinned
+// folder downloads, the Drive has no room for an upload, the sign-in is withdrawn, the Drive reports a change it
+// does not describe or forgets where its changes were read to, and the store is in a format of another client.
+// Each time: nothing is shown as complete that is not, nothing is deleted on either side, the engine says what
+// is wrong and waits instead of trying over and over, and it carries on by itself once the reason is gone.
 class RefusalScenario {
     private DriveFixture drive;
     private Guest machine;
@@ -154,11 +155,53 @@ class RefusalScenario {
         Check.equal(self.machine.succeed("systemctl show -p MainPID --value drive-engine.service").trim(), process, "and the engine is the one that was running all along");
     }
 
+    private void nothingLost(string what) {
+        self.machine.succeed(f"cmp {self.mount}/Docs/kept.bin {self.source}/kept");
+        Check.equal(self.machine.succeed(f"ls {self.store}/trash | wc -l").trim(), "0", what);
+    }
+
+    private void doubted() {
+        print("The Drive reports a change to a file and nothing readable about the file");
+        Check.equal(self.machine.succeed(f"cat {self.store}/format").trim(), "1", "the store says which format it is in");
+        string kept = self.drive.id("Docs/kept.bin");
+        self.drive.control(f"garble?id={kept}");
+        self.drive.put("root", "after.txt", "text");  // a change after it: when this is here, the other has been read
+        self.machine.waitUntil(f"cmp -s {self.mount}/after.txt {self.source}/text");
+        self.nothingLost("it is not taken for a deletion: the file is here, whole, and nothing went to the trash");
+        Check.equal(self.logged("a change to .* that cannot be read"), "1", "and the log says which change was left out");
+
+        print("The Drive no longer has the place its changes were read to");
+        self.drive.stop("drive-engine");
+        self.machine.succeed(f"echo 999999 > {self.store}/position");
+        self.drive.control(f"delete?id={kept}");  // deleted on the Drive while no feed leads to it
+        self.drive.put("root", "since.txt", "text");
+        self.drive.startEngine(self.engine);
+        self.drive.connected();
+        self.machine.waitUntil(f"cmp -s {self.mount}/since.txt {self.source}/text");
+        Check.equal(self.logged("reading the whole Drive again"), "1", "the log says once that the whole Drive is read again");
+        Check.that(self.machine.succeed(f"cat {self.store}/position").trim() != "999999", "the store stands at a place the Drive knows");
+        self.nothingLost("what the Drive deleted meanwhile is still here, and nothing went to the trash");
+        self.waitsFor("^online");
+
+        print("A store in a format this client does not know");
+        self.drive.stop("drive-engine");
+        self.machine.succeed(f"echo 2 > {self.store}/format && find {self.store} -xdev -not -path '*/tmp/*' | LC_ALL=C sort > /tmp/store-before");
+        string engine = self.machine.fail(f"drive engine --store {self.store} --runtime {self.drive.runtime} --credentials /var/lib/drive-test/credentials.json --api {self.drive.fake} 2>&1");
+        Check.that(engine.contains("is in format '2' and this client reads format 1"), f"the engine does not start on it, and says why: {engine}");
+        string door = self.machine.fail(f"mkdir -p /mnt/second && drive door --store {self.store} --mount /mnt/second --runtime /run/drive-second 2>&1");
+        Check.that(door.contains("is in format '2' and this client reads format 1"), f"neither does a door: {door}");
+        Check.equal(self.machine.succeed(f"find {self.store} -xdev -not -path '*/tmp/*' | LC_ALL=C sort | diff /tmp/store-before - && cat {self.store}/format").trim(), "2", "and nothing in the store was touched");
+        self.machine.succeed(f"echo 1 > {self.store}/format");
+        self.drive.startEngine(self.engine);
+        self.waitsFor("^online.* 0 changes to send");
+    }
+
     public void check() {
         self.prepare();
         self.diskFull();
         self.driveFull();
         self.signedOut();
+        self.doubted();
     }
 }
 
@@ -167,7 +210,7 @@ int main(Vector<string> args) {
         var lab = Lab(CLIArgs.from(args).require(0, "Supply VM descriptor"));
         RefusalScenario(lab.guest("machine")).check();
         lab.close();
-        print("PASS: a full disk, a full Drive and a withdrawn sign-in are said, waited out and cost nothing");
+        print("PASS: a full disk, a full Drive, a withdrawn sign-in and a Drive or store in doubt are said, waited out and cost nothing");
         return 0;
     } catch (string error) {
         print(error);

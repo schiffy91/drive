@@ -38,6 +38,7 @@ class FakeDrive {
     private Vector<string> tokens = [];  // every sign-in still good
     private long long clock = 1767261600000LL;  // 2026-01-01T10:00:00Z, one second per change
     private int pageSize = 1000;
+    private string garbled = "";  // the entry whose changes the feed reports unreadably
     private int lost = 0;  // uploads to carry out and then answer with an error, as when the answer never arrives
     private string stallOn = "";  // "upload" or "download": the next one waits before it is answered, so a test can stop the client in the middle
     private int stallSeconds = 0;
@@ -193,7 +194,7 @@ class FakeDrive {
             JSONValue change = JSONValue.makeObject();
             change.set("fileId", JSONValue.makeString(entry.file.id));
             change.set("removed", JSONValue.makeBool(entry.gone));
-            if (!entry.gone) { change.set("file", self.describe(entry)); }
+            if (!entry.gone) { change.set("file", entry.file.id.equals(self.garbled) ? JSONValue.makeObject() : self.describe(entry)); }
             changes.push(change);
             index++;
             taken++;
@@ -354,6 +355,11 @@ class FakeDrive {
             FakeEntry? target = self.entry(query.getOrDefault("id", ""));
             if (target == null) { return self.missing(); }
             target.gone = true;
+            self.changed(target);
+        } else if (action.equals("garble")) {  // the feed reports this entry changed, with a file nobody can read
+            FakeEntry? target = self.entry(query.getOrDefault("id", ""));
+            if (target == null) { return self.missing(); }
+            self.garbled = target.file.id;
             self.changed(target);
         } else if (action.equals("dump")) {
             JSONValue all = JSONValue.makeArray();

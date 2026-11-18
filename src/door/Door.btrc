@@ -10,6 +10,7 @@ import Library.Strings;
 import Library.Timer;
 import Library.Vector;
 
+import ../store/Format.btrc;
 import ../store/StoreFile.btrc;
 import ../store/Volumes.btrc;
 import ./Channel.btrc;
@@ -79,9 +80,11 @@ class Door implements IUserspaceFileSystem, IUserspaceWriter, IUserspaceLinker, 
     public Door(string store, string socket) {
         self.store = store;
         self.tree = store + "/tree";
+        StoreFormat.accept(store);
         for name in ["tree", "ids", "dirty", "trash", "tmp"] {  // a new store: the door may be the first to see it
             if (FileSystem.mkdirp(f"{store}/{name}") != 0 && !FileSystem.isDir(f"{store}/{name}")) { throw f"Cannot prepare the store at {store}"; }
         }
+        StoreFormat.mark(store);
         if (!StorePaths.lock(store + "/door.lock")) { throw "Another door is already serving this store"; }
         self.volumes = Volumes(store);
         self.inner = UserspaceForwarding(self.tree);

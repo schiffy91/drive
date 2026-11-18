@@ -569,6 +569,11 @@ class Engine {
             }
             if (!missing.isEmpty()) { return self.online; }  // what the Drive says of that folder could not be applied, and must not be skipped
             int more = self.mirror.step();  // one page at a time: the door is answered between pages, however far behind the store is
+            if (more == -3) {  // no feed leads from that position to now
+                Console.error("drive: the Drive no longer has the place its changes were read to; reading the whole Drive again. Nothing is removed here: what the Drive deleted meanwhile stays until it is deleted here");
+                if (!self.store.setPosition("")) { throw "Cannot record the change feed position"; }
+                more = 1;  // the next look reads it all
+            }
             bool reached = more != -1;
             self.behind = more == 1;
             self.wantFresh();

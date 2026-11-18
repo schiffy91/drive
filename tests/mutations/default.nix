@@ -65,6 +65,27 @@ let
       at = "The engine is killed and started again, and both batches still wait";
       sees = "timed out waiting for drive held --runtime /run/drive-test | grep -q 'on the Drive$'";
     }
+    {
+      rule = "only what the Drive calls removed or trashed is taken for a deletion";
+      scenario = ../refusals;
+      mutation = cut "engine/Mirror.btrc" "return change.removed || (file != null && file.trashed);" "return change.removed || file == null || file.trashed;";
+      at = "The Drive reports a change to a file and nothing readable about the file";
+      sees = "FAIL: machine: cmp /mnt/drive/Docs/kept.bin";
+    }
+    {
+      rule = "a change feed position the Drive has forgotten is not waited on";
+      scenario = ../refusals;
+      mutation = cut "engine/Mirror.btrc" "failure.kind == DRIVE_EXPIRED ? -3 : -1" "failure.kind == DRIVE_EXPIRED ? -1 : -1";
+      at = "The Drive no longer has the place its changes were read to";
+      sees = "timed out waiting for cmp -s /mnt/drive/since.txt";
+    }
+    {
+      rule = "a store in another format is not opened";
+      scenario = ../refusals;
+      mutation = cut "store/Format.btrc" ''if (!written.equals(f"{StoreFormat.current()}"))'' "if (false)";
+      at = "A store in a format this client does not know";
+      sees = "FAIL: machine: expected failure, exit";
+    }
   ];
   failed = mutant: pkgs.testers.testBuildFailure (import mutant.scenario { inherit inputs system; inherit (mutant) mutation; });
 in pkgs.runCommand "drive-mutations" { passthru.runs = map failed mutants; } (''

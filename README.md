@@ -64,6 +64,20 @@ A batch of more deletions than `--delete-limit` (50), made here or reported by t
 out. It waits, listed by `drive held`, until `drive resume` or `drive keep`. The batch is still held after
 the engine or the machine restarts, and a yes covers only the batch that was waiting when it was given.
 
+## When in doubt
+
+The client deletes nothing on a guess, and says what it did not understand:
+
+- Only a change the Drive calls removed or trashed is a deletion. A change that arrives without a
+  readable description of its file is left out and named in the log; what is here stays as it is.
+- If the Drive no longer has the place its changes were read to, the whole Drive is read again. That
+  removes nothing: what the Drive deleted in between stays here until it is deleted here, and a file
+  changed on both sides is kept twice.
+- The store names its format in the file `format` (1 today). The engine and the door refuse a store in
+  any other format before touching it.
+- The sign-in and every request's address reach `curl` in a private file under the runtime directory,
+  never on its command line, which every process on the machine can read.
+
 ## Tests
 
 ```
@@ -76,10 +90,10 @@ Every test uses `drive-fake`. Nothing in this repository talks to a real Drive.
 
 | Check | What it proves |
 |---|---|
-| `unit-planner`, `unit-remote` | the rule for each pair of local and remote states; the API client against the fake, with failures, expiry and paging |
+| `unit-planner`, `unit-remote` | the rule for each pair of local and remote states; the API client against the fake, with failures, expiry and paging, and nothing secret on a command line |
 | `vm-store`, `vm-door`, `vm-readers`, `vm-writes` | the store's facts on a real filesystem; the mount; who may cause a download; uploads, conflicts and the delete brake |
 | `vm-pinning`, `vm-placement`, `vm-crashes`, `vm-convergence` | pinned folders; a folder on another volume; an engine killed mid-read and mid-upload; two clients ending with one tree |
-| `vm-held`, `vm-held-placed`, `vm-refusals` | held deletions across an engine restart and a reboot; yes and no inside a placed folder; a full disk, a full Drive and a withdrawn sign-in |
+| `vm-held`, `vm-held-placed`, `vm-refusals` | held deletions across an engine restart and a reboot; yes and no inside a placed folder; a full disk, a full Drive, a withdrawn sign-in, an unreadable change, a forgotten feed position and a store in another format |
 | `vm-dialog`, `vm-tray`, `vm-module` | the window that asks; the tray icon and its window; the units `services.drive` generates |
 | `vm-mutations` | each safety rule cut out of the client in turn: the scenario that covers it must then fail |
 

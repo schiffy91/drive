@@ -61,7 +61,7 @@ class Mirror {
             string folder = waiting.pop();
             if (!children.has(folder)) { continue; }
             for file in children.get(folder) {
-                if (self.store.knows(file.id)) { self.store.update(file); }  // a build that was interrupted carries on
+                if (self.store.knows(file.id)) { self.renew(file); }  // a store that is read again keeps what changed here
                 else if (self.store.add(file)) { reached++; }
                 if (file.isFolder()) { waiting.push(file.id); }
             }
@@ -71,35 +71,50 @@ class Mirror {
         if (!self.store.setPosition(start)) { throw "Cannot record the change feed position"; }
     }
 
+    private bool deletes(DriveChange change) {  // only what the Drive says in so many words
+        DriveFile? file = change.file;
+        return change.removed || (file != null && file.trashed);
+    }
+
+    private void renew(DriveFile file) {  // an entry the store has
+        Uploader? uploader = self.uploader;
+        StoreFile? held = self.store.file(file.id);
+        if (uploader != null && !uploader.overwriteConflicts && held != null && self.store.changedHere(file.id) && !held.attribute("revision").equals(file.revision)) { uploader.collide(file.id, file); }  // changed on both sides
+        else { self.store.update(file); }
+    }
+
     // False when the entry is new and its folder is not here yet.
     private bool apply(DriveChange change) {
         DriveFile? file = change.file;
-        if (change.removed || file == null || file.trashed) {
+        if (self.deletes(change)) {
             if (self.store.knows(change.id)) { self.store.discard(change.id); }
             return true;
         }
+        if (file == null) {  // neither removed nor described: nothing is known of it
+            Console.error(f"drive: the Drive reported a change to {change.id} that cannot be read; what is here stays as it is");
+            return true;
+        }
         if (self.store.knows(file.id)) {
-            Uploader? uploader = self.uploader;
-            StoreFile? held = self.store.file(file.id);
-            if (uploader != null && !uploader.overwriteConflicts && held != null && self.store.changedHere(file.id) && !held.attribute("revision").equals(file.revision)) { uploader.collide(file.id, file); }  // changed on both sides
-            else { self.store.update(file); }
+            self.renew(file);
             return true;
         }
         return !file.parent.isEmpty() && self.store.add(file);
     }
 
     // One page of what changed on the Drive since last time: 0 when the store is now current, 1 when there is
-    // more to read, -1 when the Drive could not be reached, -2 when deletions are held for a yes. Below 0 the
-    // position stays where it was.
+    // more to read, -1 when the Drive could not be reached, -2 when deletions are held for a yes, -3 when the
+    // Drive no longer has the position. Below 0 the position stays where it was.
     public int step() {
         string token = self.store.position();
         if (token.isEmpty()) { throw "The store has no change feed position; build it first"; }
         DriveChanges? page = self.api.changes(token);
-        if (page == null) { return -1; }
+        if (page == null) {
+            DriveError? failure = self.api.failure;
+            return failure != null && failure.kind == DRIVE_EXPIRED ? -3 : -1;
+        }
         int deletions = 0;
         for change in page.changes {
-            DriveFile? file = change.file;
-            if ((change.removed || file == null || file.trashed) && self.store.knows(change.id)) { deletions += self.store.weight(change.id); }
+            if (self.deletes(change) && self.store.knows(change.id)) { deletions += self.store.weight(change.id); }
         }
         if (!self.allowDeletions && deletions > 0 && Planner.tooManyDeletions(self.streak + deletions, self.store.entryCount(), self.deleteLimit, self.deletePercent)) {
             if (!self.braked) { Console.error(f"drive: the Drive reports {self.streak + deletions} deletions and counting; the rest are waiting for 'drive resume'"); }
@@ -146,12 +161,12 @@ class Mirror {
             if (changes == null) { break; }
             for change in changes.changes {
                 DriveFile? file = change.file;
-                if (change.removed || file == null || file.trashed) {
+                if (self.deletes(change)) {
                     if (self.store.knows(change.id) && !gone.has(change.id)) {
                         gone.put(change.id, true);
                         order.push(change.id);
                     }
-                } else if (!self.store.knows(file.id)) {
+                } else if (file != null && !self.store.knows(file.id)) {
                     arrived.put(f"{file.parent}\n{file.name}", file);
                 }
             }

@@ -1,0 +1,19 @@
+import Library.FileSystem;
+import Library.IO;
+
+class StoreFormat {  // which shape of store this client reads and writes
+    class int current() { return 1; }  // raised when what is kept on disk changes shape
+
+    // Before anything in a store is touched. A store with no word of its format is one from before there was a word: format 1.
+    class void accept(string root) {
+        string file = root + "/format";
+        if (!FileSystem.exists(file)) { return; }
+        string written = FileSystem.readText(file).trim();
+        if (!written.equals(f"{StoreFormat.current()}")) { throw f"The store at {root} is in format '{written}' and this client reads format {StoreFormat.current()}; nothing in it was touched"; }
+    }
+
+    class void mark(string root) {  // once its folders are there
+        string file = root + "/format";
+        if (!FileSystem.exists(file) && !Path.writeAll(file, f"{StoreFormat.current()}\n")) { throw f"Cannot prepare the store at {root}"; }
+    }
+}
