@@ -33,16 +33,22 @@ class Transport {  // one curl process per request
         return f"{self.scratch}/{kind}-{self.sequence}";
     }
 
-    private Vector<string> arguments(string method, string url, Vector<string> headers, string headerFile) {
-        Vector<string> arguments = ["-sS", "--proto", "=http,https", "--request", method, "--dump-header", headerFile, "--write-out", "%{http_code}", "--header", "Expect:"];  // send bodies at once, without asking first
-        for header in headers {
-            arguments.push("--header");
-            arguments.push(header);
-        }
-        return arguments;
+    class string quoted(string value) { return value.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n").replace("\r", "\\r").replace("\t", "\\t"); }  // as curl's config files escape
+
+    private string sealed(Vector<string> urls, Vector<string> headers) {  // a command line is readable by every process
+        Vector<string> lines = [];
+        for header in headers { lines.push(f"header = \"{Transport.quoted(header)}\""); }
+        for url in urls { lines.push(f"url = \"{Transport.quoted(url)}\""); }
+        string path = self.temporary("request");
+        FileSystem.writeAtomic(path, Strings.join(lines, "\n") + "\n", 0o600);  // unwritten, curl has no URL and fails
+        return path;
     }
 
-    private TransportResponse finish(ExecResult ran, string headerFile, string bodyFile, bool keepBody) {
+    private Vector<string> arguments(string method, string request, string headerFile) {
+        return ["-sS", "--proto", "=http,https", "--request", method, "--dump-header", headerFile, "--write-out", "%{http_code}", "--header", "Expect:", "--config", request];  // Expect: send bodies at once, without asking first
+    }
+
+    private TransportResponse finish(ExecResult ran, string request, string headerFile, string bodyFile, bool keepBody) {
         TransportResponse response = TransportResponse();
         if (ran.code != 0) {
             response.error = ran.wasTimedOut() ? "the request timed out" : f"curl failed ({ran.code}): {ran.stderr().trim()}";
@@ -57,6 +63,7 @@ class Transport {  // one curl process per request
             if (colon > 0) { response.headers.put(text.substring(0, colon).toLower(), text.substring(colon + 1, text.len() - colon - 1).trim()); }
         }
         if (keepBody && FileSystem.exists(bodyFile)) { response.body = FileSystem.readText(bodyFile); }
+        FileSystem.removeIfExists(request);
         FileSystem.removeIfExists(headerFile);
         if (keepBody) { FileSystem.removeIfExists(bodyFile); }
         return response;
@@ -65,7 +72,8 @@ class Transport {  // one curl process per request
     public TransportResponse send(string method, string url, Vector<string> headers, string body = "") {
         string headerFile = self.temporary("headers");
         string bodyFile = self.temporary("body");
-        Vector<string> arguments = self.arguments(method, url, headers, headerFile);
+        string request = self.sealed([url], headers);
+        Vector<string> arguments = self.arguments(method, request, headerFile);
         arguments.push("--max-time");
         arguments.push(Strings.fromInt(self.timeoutSeconds));
         arguments.push("--output");
@@ -74,41 +82,37 @@ class Transport {  // one curl process per request
             arguments.push("--data-binary");
             arguments.push("@-");
         }
-        arguments.push("--");
-        arguments.push(url);
         ExecResult ran = ChildProcess.run("curl", arguments, timeoutMilliseconds=(self.timeoutSeconds + 5) * 1000, stdinData=body);
-        return self.finish(ran, headerFile, bodyFile, true);
+        return self.finish(ran, request, headerFile, bodyFile, true);
     }
 
     public TransportResponse download(string url, Vector<string> headers, string path) {  // check the status before trusting the file
         string headerFile = self.temporary("headers");
-        Vector<string> arguments = self.arguments("GET", url, headers, headerFile);
+        string request = self.sealed([url], headers);
+        Vector<string> arguments = self.arguments("GET", request, headerFile);
         arguments.push("--speed-limit");
         arguments.push("1");
         arguments.push("--speed-time");
         arguments.push(Strings.fromInt(self.stallSeconds));
         arguments.push("--output");
         arguments.push(path);
-        arguments.push("--");
-        arguments.push(url);
         ExecResult ran = ChildProcess.run("curl", arguments);
-        return self.finish(ran, headerFile, path, false);
+        return self.finish(ran, request, headerFile, path, false);
     }
 
     // Several whole files at once, over one connection where the server allows it. The status of each, in the
     // order given; 0 for one that got no answer. A file is only to be trusted when its status says so.
     public Vector<int> downloadSeveral(Vector<string> urls, Vector<string> headers, Vector<string> paths) {
         Vector<string> arguments = ["-sS", "--proto", "=http,https", "--parallel", "--parallel-max", Strings.fromInt(urls.len), "--write-out", "%{http_code} %{filename_effective}\n", "--speed-limit", "1", "--speed-time", Strings.fromInt(self.stallSeconds)];
-        for header in headers {
-            arguments.push("--header");
-            arguments.push(header);
-        }
-        for (int index = 0; index < urls.len; index++) {
+        string request = self.sealed(urls, headers);
+        arguments.push("--config");
+        arguments.push(request);
+        for path in paths {  // the first output is the first URL's
             arguments.push("--output");
-            arguments.push(paths.get(index));
-            arguments.push(urls.get(index));
+            arguments.push(path);
         }
         ExecResult ran = ChildProcess.run("curl", arguments);
+        FileSystem.removeIfExists(request);
         Map<string, int> answered = {};
         for line in Strings.split(ran.stdout(), "\n") {
             int space = line.indexOf(" ");
@@ -122,7 +126,8 @@ class Transport {  // one curl process per request
     public TransportResponse upload(string method, string url, Vector<string> headers, string path, long long offset = 0LL) {
         string headerFile = self.temporary("headers");
         string bodyFile = self.temporary("body");
-        Vector<string> arguments = self.arguments(method, url, headers, headerFile);
+        string request = self.sealed([url], headers);
+        Vector<string> arguments = self.arguments(method, request, headerFile);
         arguments.push("--speed-limit");
         arguments.push("1");
         arguments.push("--speed-time");
@@ -135,9 +140,7 @@ class Transport {  // one curl process per request
         }
         arguments.push("--upload-file");
         arguments.push(path);
-        arguments.push("--");
-        arguments.push(url);
         ExecResult ran = ChildProcess.run("curl", arguments);
-        return self.finish(ran, headerFile, bodyFile, true);
+        return self.finish(ran, request, headerFile, bodyFile, true);
     }
 }

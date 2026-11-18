@@ -14,12 +14,17 @@ let
     };
     programs.drive-remote-contract = "tests/remote/Main.btrc";
   };
-in pkgs.runCommand "drive-remote" { nativeBuildInputs = [ pkgs.curl ]; } ''
+  recorder = pkgs.writeShellScriptBin "curl" ''
+    printf '%s\n' "$@" >> "$CURL_ARGUMENTS"
+    exec ${pkgs.curl}/bin/curl "$@"
+  '';  # stands where curl is found, and writes down what it was started with
+in pkgs.runCommand "drive-remote" { nativeBuildInputs = [ recorder ]; } ''
   ${programs.fake}/bin/drive-fake 18473 > fake.log &
   fake=$!
   for attempt in $(seq 50); do grep -q READY fake.log && break; sleep 0.1; done
   mkdir scratch
-  ${contract}/bin/drive-remote-contract 18473 "$PWD/scratch" || { kill $fake; exit 1; }
+  export CURL_ARGUMENTS=$PWD/curl-arguments
+  ${contract}/bin/drive-remote-contract 18473 "$PWD/scratch" "$CURL_ARGUMENTS" || { kill $fake; exit 1; }
   kill $fake
   touch $out
 ''

@@ -18,10 +18,12 @@ class RemoteContract {
     private string scratch;
     private Transport transport;
     private DriveApi api;
+    private string recorded;  // every argument curl was started with
 
-    public RemoteContract(string port, string scratch) {
+    public RemoteContract(string port, string scratch, string recorded) {
         self.base = f"http://127.0.0.1:{port}";
         self.scratch = scratch;
+        self.recorded = recorded;
         self.transport = Transport(scratch + "/transport");
         self.api = self.client("refresh-ok");
     }
@@ -193,19 +195,42 @@ class RemoteContract {
         Check.that(nowhere.rootId() == null && self.refused(nowhere, DRIVE_NETWORK, true), "no network is reported as something to try again later");
     }
 
+    private void several() {
+        DriveFile one = self.must(self.api.upload("", "root", "one.bin", self.write("one.bin", "first of two"), -1LL), "a first file to fetch whole is uploaded");
+        DriveFile two = self.must(self.api.upload("", "root", "two.bin", self.write("two.bin", "second"), -1LL), "and a second");
+        Vector<bool> arrived = self.api.downloadWhole([one.id, two.id, "no-such-id"], [self.scratch + "/whole-1", self.scratch + "/whole-2", self.scratch + "/whole-3"]);
+        Check.that(arrived.get(0) && arrived.get(1) && !arrived.get(2), "several files are fetched at once, and a missing one is told apart");
+        Check.equal(FileSystem.readText(self.scratch + "/whole-1") + "|" + FileSystem.readText(self.scratch + "/whole-2"), "first of two|second", "each file lands under its own name");
+    }
+
+    private void secrets() {  // last: judges every request made above
+        Vector<string> arguments = Strings.split(FileSystem.readText(self.recorded), "\n");
+        int requests = 0;
+        for argument in arguments {
+            if (argument.equals("--config")) { requests++; }
+            Check.that(!argument.contains("Bearer") && !argument.toLower().contains("authorization") && !argument.contains("access-"), f"no command line carries the sign-in: {argument}");
+            Check.that(!argument.contains("://"), f"no command line carries an address, which may hold an upload session: {argument}");
+        }
+        Check.that(requests > 40, f"the requests above were recorded ({requests})");
+        Check.that(FileSystem.listDir(self.scratch + "/transport").len == 0, "and no request's private file is left behind");
+    }
+
     public void run() {
         self.timestamps();
         self.files();
         self.listing();
         self.changes();
         self.faults();
+        self.several();
+        self.secrets();
     }
 }
 
 int main(int argc, char** argv) {
     try {
         CLIArgs args = CLIArgs(argc, argv);
-        RemoteContract(args.require(0, "usage: drive-remote-contract PORT SCRATCH"), args.require(1, "usage: drive-remote-contract PORT SCRATCH")).run();
+        string usage = "usage: drive-remote-contract PORT SCRATCH CURL-ARGUMENTS";
+        RemoteContract(args.require(0, usage), args.require(1, usage), args.require(2, usage)).run();
         print("PASS: the Drive API client");
         return 0;
     } catch (string error) {
