@@ -609,7 +609,7 @@ class Engine {
             }
             long long wait = self.due - MonotonicClock.milliseconds();
             bool busy = self.online && !self.paused && self.wanted.len > 0 && MonotonicClock.milliseconds() >= self.roomDue;  // pinned files to fetch: only look, do not wait
-            int ready = Channel.wait(door == null ? -1 : door.handle(), listener.handle(), -1, busy ? 0 : door == null ? 500 : wait < 0LL ? 0 : wait > 1000LL ? 1000 : (int)wait);
+            int ready = Channel.wait(door == null ? -1 : door.handle(), listener.handle(), -1, busy || (self.online && self.uploader.unfinished) ? 0 : door == null ? 500 : wait < 0LL ? 0 : wait > 1000LL ? 1000 : (int)wait);
             if ((ready & 1) != 0 && door != null) {
                 while (door.isOpen()) {
                     string message = door.receive();

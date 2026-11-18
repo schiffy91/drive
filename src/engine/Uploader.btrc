@@ -415,24 +415,41 @@ class Uploader {
 
     // Do what is ready. Deletions first, so a name that was freed is free on the Drive before something takes it;
     // then paths, shallowest first, so a new folder exists before what is in it.
+    public int sliceMilliseconds = 200;  // how long one call may work before the engine answers the door and commands again
+    public bool unfinished = false;  // the last call stopped at that limit with more to look at: call again without waiting
+    private int tried = 0;  // deletions already attempted in this round
+
+    // One slice of a round, and at least one entry of it. A round tries each deletion once and looks at each
+    // path once; what a slice leaves stays where it is, and the round ends with the last path.
     public void work() {
+        self.unfinished = false;
         if (self.waiting() == 0) { return; }
+        long long until = MonotonicClock.milliseconds() + (long long)self.sliceMilliseconds;
+        int worked = 0;
         self.follow();
         if (!self.allowed && Planner.tooManyDeletions(self.removals.len, self.store.entryCount() + self.removals.len, self.deleteLimit, self.deletePercent)) {
             if (!self.braked) { Console.error(f"drive: {self.removals.len} deletions are waiting for 'drive resume'"); }
             self.braked = true;
         } else {
-            Vector<string> waiting = [];
-            for id in self.removals {
+            while (self.tried < self.removals.len) {
+                if (worked > 0 && MonotonicClock.milliseconds() >= until) {
+                    self.unfinished = true;
+                    return;
+                }
                 bool done = false;
-                try { done = self.remove(id); } catch (string error) { Console.error(f"drive: {error}"); }
+                try { done = self.remove(self.removals.get(self.tried)); } catch (string error) { Console.error(f"drive: {error}"); }
                 self.follow();
-                if (!done) { waiting.push(id); }
+                worked++;
+                if (done) { self.removals.remove(self.tried); } else { self.tried++; }  // one that fails waits for the next round
             }
-            self.removals = waiting;
-            if (waiting.len == 0) { self.allowed = false; }
+            if (self.removals.len == 0) { self.allowed = false; }
         }
         while (self.paths.len > 0) {  // a conflict adds a path while this runs
+            if (worked > 0 && MonotonicClock.milliseconds() >= until) {
+                self.unfinished = true;
+                return;
+            }
+            worked++;
             if (self.unsorted) {  // kept last-first, so the next one is taken off the end
                 self.paths.sort();
                 self.paths.reverse();
@@ -445,9 +462,10 @@ class Uploader {
             if (!done) { self.later.push(path); }
             self.follow();
         }
-        Vector<string> unfinished = self.later;
+        self.tried = 0;
+        Vector<string> again = self.later;
         self.later = [];
-        for path in unfinished { self.add(path); }
+        for path in again { self.add(path); }
         self.remember();
     }
 }

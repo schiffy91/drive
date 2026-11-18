@@ -102,4 +102,7 @@ Nix build places it.
 - A pinned file whose download ends in an error other than "offline" leaves the queue until the engine
   restarts.
 - A disk with no room at all reads as offline, because the feed position cannot be written.
+- The engine does one transfer at a time and answers the mount and commands between transfers. While one
+  large file is on its way it answers nobody: opening a file that is not downloaded waits for it, and
+  `drive status` says what the engine last wrote down, marked as such.
 - macOS is not supported.

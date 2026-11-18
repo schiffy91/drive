@@ -29,6 +29,7 @@ class WritesScenario {
         self.drive.put("root", "both.txt", "text");
         self.drive.put("root", "both2.txt", "text");
         self.drive.put("root", "gone.txt", "text");
+        self.drive.put("root", "during.bin", "cloud.bin");
         for folder in ["Bulk", "Back", "Theirs", "Unbraked", "Whole"] {
             string id = self.drive.folder("root", folder);
             for (int number = 1; number <= 5; number++) { self.drive.put(id, f"b{number}.txt", "text"); }
@@ -208,6 +209,19 @@ class WritesScenario {
         Check.that(self.drive.onDrive("later.txt", self.drive.sha(self.mount + "/later.txt")), "nothing written meanwhile is lost");
     }
 
+    private void whileSending() {
+        print("A long batch on its way up keeps the engine from nothing else");
+        self.drive.control("slow?milliseconds=1500");  // sixteen files, a second and a half each
+        self.machine.succeed(f"mkdir {self.mount}/Batch && for n in $(seq 1 16); do echo $n > {self.mount}/Batch/s$n.txt; done");
+        self.machine.waitUntil(f"curl -sS -X POST '{self.drive.fake}/__control/dump' | python3 /var/lib/drive-test/entries.py s1.txt | grep -q .");
+        self.machine.succeed(f"timeout 8 cat {self.mount}/during.bin > /dev/null");  // not downloaded: the engine fetches it between two uploads
+        string said = self.drive.drive("status");
+        Check.that(said.startsWith("online") && said.contains("changes to send") && !said.contains(" 0 changes to send"), f"and it says itself how much is still to send: {said.trim()}");
+        self.drive.control("slow?milliseconds=0");
+        self.machine.waitUntil(f"drive status --runtime {self.drive.runtime} | grep -q ' 0 changes to send'");
+        Check.that(!self.drive.remote("s16.txt").isEmpty() && !self.drive.remote("s9.txt").isEmpty(), "the whole batch arrives");
+    }
+
     public void check() {
         self.prepare();
         self.goUp();
@@ -215,6 +229,7 @@ class WritesScenario {
         self.conflicts();
         self.brakes();
         self.whileStopped();
+        self.whileSending();
     }
 }
 

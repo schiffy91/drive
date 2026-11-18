@@ -251,6 +251,18 @@ class Drive {
         Console.write(engine.receive());
     }
 
+    // The engine answers between transfers. In the middle of one long transfer it says nothing, and what it last
+    // wrote down is said for it, in the same words.
+    class void status(CLICommandLine options) {
+        string answer = Drive.asked(options, "status", 3);
+        if (!answer.isEmpty()) {
+            Console.log(answer);
+            return;
+        }
+        DriveProgress last = DriveProgress.read(Drive.runtime(options));
+        Console.log(f"busy with one transfer; before it: {last.online ? "online" : "offline"}, door {last.door ? "connected" : "absent"}, {last.folders} folders, {last.asking} waiting, {last.sending} changes to send, {last.files} to download{last.held ? ", deletions held" : ""}");
+    }
+
     // How much each kept folder holds, by walking it; `--save` leaves the numbers where the status window reads them.
     class void usage(CLICommandLine options) {
         DriveProgress progress = DriveProgress.read(Drive.runtime(options));
@@ -482,7 +494,7 @@ class Drive {
         else if (command.equals("readers")) { Drive.readers(options); }
         else if (command.equals("auth")) { Drive.auth(options); }
         else if (command.equals("push")) { Drive.push(options); }
-        else if (command.equals("status")) { Drive.ask(options, "status"); }
+        else if (command.equals("status")) { Drive.status(options); }
         else if (command.equals("progress")) { Drive.ask(options, "progress"); }  // the same, one fact to a line
         else if (command.equals("usage")) { Drive.usage(options); }
         else if (command.equals("resume")) { Drive.ask(options, "resume"); }
