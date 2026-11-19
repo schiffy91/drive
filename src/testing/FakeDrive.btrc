@@ -21,6 +21,8 @@ class FakeEntry {
 class FakeUpload {
     public string id = "";  // empty: a new file
     public JSONValue metadata = JSONValue.makeObject();
+    public Bytes received = Bytes();  // what has arrived so far, over one sending or several
+    public string landed = "";  // the entry it became, once all of it was there
 }
 
 // The parts of the Drive API the client uses, served from memory, with faults on request.
@@ -40,9 +42,12 @@ class FakeDrive {
     private int pageSize = 1000;
     private string garbled = "";  // the entry whose changes the feed reports unreadably
     private int lost = 0;  // uploads to carry out and then answer with an error, as when the answer never arrives
+    private int lostStatus = 400;
     private string stallOn = "";  // "upload" or "download": the next one waits before it is answered, so a test can stop the client in the middle
     private int stallSeconds = 0;
     private int slowMilliseconds = 0;  // every upload takes this long, as on a slow line
+    private int cutBytes = -1;  // the next sending is cut off after this many bytes, as when the line drops
+    private bool cutThenFails = false;
     private int failures = 0;
     private int failureStatus = 503;
     private int shortBytes = -1;  // next download returns only this many
@@ -273,13 +278,47 @@ class FakeDrive {
         return HTTPResponse.json("{}").addHeader(f"Location: http://{request.header("host")}/upload/session/{session}");  // under the name the client reached it by
     }
 
+    // One sending to an upload session, as the Drive takes them: all of the file at once, or from the byte it
+    // has reached ("Content-Range: bytes 42-99/100"), or a question about how far it got ("bytes */100").
     private HTTPResponse finishUpload(HTTPRequest request, string session) {
         if (!self.uploads.has(session)) { return self.missing(); }
         FakeUpload upload = self.uploads.get(session);
-        self.uploads.remove(session);
+        string range = request.header("content-range");
+        if (range.startsWith("bytes */")) {
+            FakeEntry? became = upload.landed.isEmpty() ? null : self.entry(upload.landed);
+            if (became != null) { return HTTPResponse.json(self.describe(became).stringify()); }
+            return self.partial(upload);
+        }
+        if (!upload.landed.isEmpty()) { return self.refuse(400, "badRequest", "This upload has already been completed"); }
+        long long start = 0LL;
+        long long total = (long long)request.bodyBytes.length;
+        if (range.startsWith("bytes ")) {
+            int dash = range.indexOf("-");
+            int slash = range.indexOf("/");
+            start = range.substring(6, dash - 6).toLong();
+            total = range.substring(slash + 1, range.len() - slash - 1).toLong();
+        } else {
+            upload.received = Bytes();  // a sending without a range is the whole file, from the start
+        }
+        self.log.push(f"sent {session} from {start}: {request.bodyBytes.length} bytes");
+        if (start != (long long)upload.received.length) { return self.refuse(400, "badRequest", f"Expected bytes from {upload.received.length}, was sent bytes from {start}"); }
+        if (self.cutBytes >= 0 && self.cutBytes < request.bodyBytes.length) {
+            upload.received.appendBytes(request.bodyBytes.slice(0, self.cutBytes));
+            self.cutBytes = -1;
+            if (self.cutThenFails) {
+                self.failures = 1000000;
+                self.failureStatus = 503;
+            }
+            return self.refuse(503, "backendError", "The fake cut this sending off");
+        }
+        upload.received.appendBytes(request.bodyBytes);
+        if ((long long)upload.received.length < total) { return self.partial(upload); }
         FakeEntry? replaced = upload.id.isEmpty() ? null : self.entry(upload.id);
         long long freed = replaced == null ? 0LL : (long long)replaced.content.length;
-        if (self.quota >= 0LL && self.used() - freed + (long long)request.bodyBytes.length > self.quota) { return self.refuse(403, "storageQuotaExceeded", "The user's Drive storage quota has been exceeded."); }
+        if (self.quota >= 0LL && self.used() - freed + (long long)upload.received.length > self.quota) {
+            self.uploads.remove(session);
+            return self.refuse(403, "storageQuotaExceeded", "The user's Drive storage quota has been exceeded.");
+        }
         FakeEntry? target = null;
         if (upload.id.isEmpty()) {
             string parent = upload.metadata.get("parents").at(0).asString();
@@ -290,8 +329,10 @@ class FakeDrive {
         }
         if (target == null) { return self.missing(); }
         self.apply(target, upload.metadata);
-        self.fill(target, request.bodyBytes);
+        self.fill(target, upload.received);
         self.changed(target);
+        upload.landed = target.file.id;  // the session still answers how far it got: all the way
+        upload.received = Bytes();
         if (self.stallOn.equals("upload")) {
             self.stallOn = "";
             Timer.sleepMillis(self.stallSeconds * 1000);
@@ -299,9 +340,15 @@ class FakeDrive {
         if (self.slowMilliseconds > 0) { Timer.sleepMillis(self.slowMilliseconds); }
         if (self.lost > 0) {
             self.lost--;
-            return self.refuse(400, "badRequest", "The fake did the upload and lost its answer");
+            return self.refuse(self.lostStatus, self.lostStatus >= 500 ? "backendError" : "badRequest", "The fake did the upload and lost its answer");
         }
         return HTTPResponse.json(self.describe(target).stringify());
+    }
+
+    private HTTPResponse partial(FakeUpload upload) {  // 308: go on from here
+        HTTPResponse response = HTTPResponse(308, "application/json", "");
+        if (upload.received.length > 0) { response.addHeader(f"Range: bytes=0-{upload.received.length - 1}"); }
+        return response;
     }
 
     private long long used() {  // what the account holds, the trash included
@@ -334,8 +381,14 @@ class FakeDrive {
             self.stallSeconds = query.getOrDefault("seconds", "5").toInt();
         } else if (action.equals("slow")) {
             self.slowMilliseconds = query.getOrDefault("milliseconds", "0").toInt();
+        } else if (action.equals("cut")) {
+            self.cutBytes = query.getOrDefault("bytes", "0").toInt();
+            self.cutThenFails = query.getOrDefault("then", "").equals("fail");  // and nothing is answered after it, until `fail?count=0`
         } else if (action.equals("lose")) {
             self.lost = query.getOrDefault("count", "1").toInt();
+            self.lostStatus = query.getOrDefault("status", "400").toInt();
+        } else if (action.equals("forget")) {  // every upload session is gone, as after the week the Drive keeps one
+            self.uploads.clear();
         } else if (action.equals("page")) {
             self.pageSize = query.getOrDefault("size", "1000").toInt();
         } else if (action.equals("log")) {

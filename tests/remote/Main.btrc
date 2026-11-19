@@ -195,6 +195,75 @@ class RemoteContract {
         Check.that(nowhere.rootId() == null && self.refused(nowhere, DRIVE_NETWORK, true), "no network is reported as something to try again later");
     }
 
+    private int times(string text, string part) { return Strings.split(text, part).len - 1; }
+
+    private DriveFile sent(DriveApi api, DriveFile? file, string what) {
+        DriveError? failure = api.failure;
+        if (file == null) { throw f"FAIL: {what}{failure == null ? "" : ": " + failure.describe()}\n{self.control("log")}"; }
+        return file;
+    }
+
+    // An upload that is cut off goes on from the byte the Drive has, in the session it had opened.
+    private void resumed() {
+        string sessions = self.scratch + "/sessions";
+        DriveApi once = self.client("refresh-ok");  // one try for each call, as the engine makes them
+        once.sessions = sessions;
+        once.attempts = 1;
+        string content = "";
+        for (int line = 0; line < 20; line++) { content = content + f"line {line + 10} of a file that is sent in two goes.........\n"; }
+        string path = self.write("resume.bin", content);
+        int size = content.len();
+        long long modified = 1700000000000LL;
+        self.control("log?clear=1");
+        self.control("cut?bytes=300");
+        Check.that(once.upload("", "root", "resume.bin", path, modified) == null && self.refused(once, DRIVE_SERVER, true), "a sending that is cut off is something to try again");
+        Check.that(FileSystem.listDir(sessions).len == 1, "and its session is kept");
+        DriveFile whole = self.sent(once, once.upload("", "root", "resume.bin", path, modified), "the next try finishes it");
+        string log = self.control("log?clear=1");
+        Check.that(log.contains(f"from 0: {size} bytes") && log.contains(f"from 300: {size - 300} bytes"), f"by sending only what the Drive did not have: {log}");
+        Check.that(self.times(log, "POST /upload/drive/v3/files") == 1, "in the one session it had opened");
+        string back = self.scratch + "/resumed";
+        Check.that(self.api.download(whole.id, 0LL, (long long)size - 1LL, back) && FileSystem.readText(back).equals(content), "and the file on the Drive is the file");
+        Check.that(FileSystem.listDir(sessions).len == 0, "after which the session is forgotten");
+
+        DriveApi patient = self.client("refresh-ok");  // a caller that waits gets through a cut in one call
+        patient.sessions = sessions;
+        patient.attempts = 3;
+        self.control("cut?bytes=10");
+        self.sent(patient, patient.upload("", "root", "patient.bin", path, modified), "a caller that retries is cut off and finishes in the same call");
+        log = self.control("log?clear=1");
+        Check.that(log.contains(f"from 10: {size - 10} bytes") && self.times(log, "POST /upload/drive/v3/files") == 1, "again from where the Drive had it");
+
+        self.control("cut?bytes=300");
+        Check.that(once.upload("", "root", "changed.bin", path, modified) == null, "a third file is cut off");
+        string other = self.write("resume-longer.bin", content + "and one line more\n");
+        self.sent(once, once.upload("", "root", "changed.bin", other, modified + 1000LL), "the file changed before the next try, and is sent");
+        log = self.control("log?clear=1");
+        Check.that(self.times(log, "POST /upload/drive/v3/files") == 2 && log.contains(f"from 0: {size + 18} bytes") && !log.contains("from 300:"), "whole, in a new session: the old one held the start of another file");
+
+        self.control("cut?bytes=300");
+        Check.that(once.upload("", "root", "forgotten.bin", other, modified) == null, "a fourth is cut off");
+        self.control("forget");
+        self.sent(once, once.upload("", "root", "forgotten.bin", other, modified), "a session the Drive no longer has is replaced by a new one");
+        Check.that(FileSystem.listDir(sessions).len == 0, "and nothing of the old one is kept");
+
+        self.control("lose?count=1&status=503");
+        self.control("log?clear=1");
+        Check.that(once.upload("", "root", "answered.bin", other, modified) == null, "a fifth arrives, and its answer is lost");
+        DriveFile answered = self.sent(once, once.upload("", "root", "answered.bin", other, modified), "the next try asks the session, which has it all");
+        log = self.control("log?clear=1");
+        Check.that(self.times(log, "sent ") == 1 && self.times(log, "POST /upload/drive/v3/files") == 1, f"so nothing is sent twice and no second file is made: {log}");
+        DriveListing? named = self.api.named("root", "answered.bin");
+        Check.that(named != null && named.files.len == 1 && named.files.get(0).id == answered.id, "there is one file of that name");
+
+        DriveApi plain = self.client("refresh-ok");  // without a folder for sessions nothing is kept
+        plain.attempts = 1;
+        self.control("cut?bytes=300");
+        Check.that(plain.upload("", "root", "plain.bin", path, modified) == null, "a caller that keeps no sessions is cut off");
+        self.sent(plain, plain.upload("", "root", "plain.bin", path, modified), "and sends the file again");
+        Check.that(self.control("log?clear=1").contains(f"from 0: {size} bytes") && FileSystem.listDir(sessions).len == 0, "from the start");
+    }
+
     private void several() {
         DriveFile one = self.must(self.api.upload("", "root", "one.bin", self.write("one.bin", "first of two"), -1LL), "a first file to fetch whole is uploaded");
         DriveFile two = self.must(self.api.upload("", "root", "two.bin", self.write("two.bin", "second"), -1LL), "and a second");
@@ -221,6 +290,7 @@ class RemoteContract {
         self.listing();
         self.changes();
         self.faults();
+        self.resumed();
         self.several();
         self.secrets();
     }

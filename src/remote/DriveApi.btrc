@@ -1,3 +1,4 @@
+import Library.Digest;
 import Library.FileSystem;
 import Library.HTTP;
 import Library.JSON;
@@ -90,6 +91,8 @@ class DriveApi {
     private int strikes = 0;  // failures worth retrying since the last answer
     public string signInFile = "";  // the sign-in, when it is a file of this client's own: read again before each new token, so signing in again needs no restart
     public DriveError? failure = null;  // why the last call returned nothing
+    public string sessions = "";  // a folder: an upload that was cut off goes on from where the Drive has it; empty: each one starts anew
+    private DriveFile? landed = null;  // the file of an upload its session turned out to have finished
 
     public DriveApi(Transport transport, DriveCredentials credentials) {
         self.transport = transport;
@@ -327,28 +330,100 @@ class DriveApi {
         return self.update(id, patch);
     }
 
-    // Send a file's content: a new file under `parent`, or new content for `id`. One of the two is empty.
-    public DriveFile? upload(string id, string parent, string name, string path, long long modified) {
-        JSONValue body = JSONValue.makeObject();
-        if (modified >= 0LL) { body.set("modifiedTime", JSONValue.makeString(Timestamp.format(modified))); }
-        string url = f"{self.apiBase}/upload/drive/v3/files";
-        if (id.isEmpty()) {
-            body.set("name", JSONValue.makeString(name));
-            JSONValue parents = JSONValue.makeArray();
-            parents.push(JSONValue.makeString(parent));
-            body.set("parents", parents);
-        } else {
-            url = url + "/" + HTTPUrl.encode(id);
+    // How many bytes of an upload its session holds. -1: the session is of no use, or could not be asked
+    // (`failure` says which). With `landed` set, the Drive had all of it and that is its file.
+    private long long heldBy(string session, long long size) {
+        self.landed = null;
+        TransportResponse? asked = self.exchange(0, "PUT", session, [f"Content-Range: bytes */{size}"], "", "");
+        if (asked == null) { return -1LL; }
+        if (asked.status != 308) {
+            JSONValue answer = JSONValue.parse(asked.body);
+            self.landed = self.described(answer.isError() ? null : answer);
+            return self.landed == null ? -1LL : size;
         }
-        TransportResponse? opened = self.exchange(0, id.isEmpty() ? "POST" : "PATCH", f"{url}?uploadType=resumable&fields={DriveFile.fields()}", ["Content-Type: application/json; charset=UTF-8", "X-Upload-Content-Type: application/octet-stream"], body.stringify(), "");
-        if (opened == null) { return null; }
-        string session = opened.header("location");
+        string range = asked.header("range");  // "bytes=0-41": 42 bytes are there; no header: none
+        int dash = range.indexOf("-");
+        return dash < 0 ? 0LL : range.substring(dash + 1, range.len() - dash - 1).toLong() + 1LL;
+    }
+
+    // Send a file's content: a new file under `parent`, or new content for `id`. One of the two is empty.
+    // With `sessions` set, a sending that was cut off, by a lost line or by this program stopping, is taken
+    // up again from the byte the Drive says it has, for as long as the file is the size and time it was.
+    public DriveFile? upload(string id, string parent, string name, string path, long long modified) {
+        long long size = FileSystem.stat(path).size;
+        string kept = self.sessions.isEmpty() ? "" : f"{self.sessions}/{SHA256.digest(id.isEmpty() ? f"{parent}/{name}" : id)}";
+        string mark = f"{size} {modified}";
+        string session = "";
+        long long offset = 0LL;
+        if (!kept.isEmpty() && FileSystem.exists(kept)) {
+            Vector<string> lines = Strings.split(FileSystem.readText(kept), "\n");
+            if (lines.len >= 2 && lines.get(1) == mark) {
+                offset = self.heldBy(lines.get(0), size);
+                if (self.landed != null) {
+                    FileSystem.removeIfExists(kept);
+                    return self.landed;
+                }
+                DriveError? why = self.failure;
+                if (offset < 0LL && why != null && why.transient()) { return null; }  // the Drive could not be asked: the session waits
+                if (offset >= 0LL) { session = lines.get(0); }
+            }
+            if (session.isEmpty()) {  // another file by now, or a session the Drive no longer has
+                FileSystem.removeIfExists(kept);
+                offset = 0LL;
+            }
+        }
         if (session.isEmpty()) {
-            self.fail(DRIVE_INVALID, opened.status, "Drive opened no upload session");
+            JSONValue body = JSONValue.makeObject();
+            if (modified >= 0LL) { body.set("modifiedTime", JSONValue.makeString(Timestamp.format(modified))); }
+            string url = f"{self.apiBase}/upload/drive/v3/files";
+            if (id.isEmpty()) {
+                body.set("name", JSONValue.makeString(name));
+                JSONValue parents = JSONValue.makeArray();
+                parents.push(JSONValue.makeString(parent));
+                body.set("parents", parents);
+            } else {
+                url = url + "/" + HTTPUrl.encode(id);
+            }
+            TransportResponse? opened = self.exchange(0, id.isEmpty() ? "POST" : "PATCH", f"{url}?uploadType=resumable&fields={DriveFile.fields()}", ["Content-Type: application/json; charset=UTF-8", "X-Upload-Content-Type: application/octet-stream"], body.stringify(), "");
+            if (opened == null) { return null; }
+            session = opened.header("location");
+            if (session.isEmpty()) {
+                self.fail(DRIVE_INVALID, opened.status, "Drive opened no upload session");
+                return null;
+            }
+            if (!kept.isEmpty()) {
+                FileSystem.mkdirp(self.sessions);
+                FileSystem.writeAtomic(kept, f"{session}\n{mark}\n", 0o600);  // whoever has the session's address can write the file
+            }
+        }
+        TransportResponse? sent = null;
+        int allowed = self.attempts;
+        for (int attempt = 0; attempt < allowed; attempt++) {
+            if (attempt > 0) {  // what arrived of the last try is not sent again
+                Timer.sleepMillis(self.backoffMilliseconds << attempt);
+                offset = self.heldBy(session, size);
+                if (self.landed != null) {
+                    FileSystem.removeIfExists(kept);
+                    return self.landed;
+                }
+                if (offset < 0LL) { break; }
+            }
+            if (self.waits) { self.attempts = 1; }  // a second try must first ask how far the first one got
+            sent = self.exchange(2, "PUT", session, ["Content-Type: application/octet-stream"], "", path, offset);
+            self.attempts = allowed;
+            DriveError? why = self.failure;
+            if (sent != null || !self.waits || why == null || !why.transient()) { break; }
+        }
+        if (sent != null && sent.status == 308) {  // answered, and not all of it there
+            self.fail(DRIVE_NETWORK, 308, "the Drive has only part of the upload");
+            sent = null;
+        }
+        if (sent == null) {
+            DriveError? why = self.failure;
+            if (!kept.isEmpty() && (why == null || !why.transient())) { FileSystem.removeIfExists(kept); }  // refused: the next try starts anew
             return null;
         }
-        TransportResponse? sent = self.exchange(2, "PUT", session, ["Content-Type: application/octet-stream"], "", path);
-        if (sent == null) { return null; }
+        if (!kept.isEmpty()) { FileSystem.removeIfExists(kept); }
         JSONValue answer = JSONValue.parse(sent.body);
         return self.described(answer.isError() ? null : answer);
     }

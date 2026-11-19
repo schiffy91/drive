@@ -123,10 +123,18 @@ class Transport {  // one curl process per request
         return statuses;
     }
 
+    // The file from `offset` on. curl resumes no HTTP upload by itself, so for the rest of a file it is given
+    // those bytes on its input, and told where they belong and how many they are.
     public TransportResponse upload(string method, string url, Vector<string> headers, string path, long long offset = 0LL) {
         string headerFile = self.temporary("headers");
         string bodyFile = self.temporary("body");
-        string request = self.sealed([url], headers);
+        Vector<string> said = [];
+        said.extend(headers);
+        if (offset > 0LL) {
+            long long size = FileSystem.stat(path).size;
+            said.extend([f"Content-Range: bytes {offset}-{size - 1LL}/{size}", f"Content-Length: {size - offset}", "Transfer-Encoding:"]);  // a length of its own, and so no chunks
+        }
+        string request = self.sealed([url], said);
         Vector<string> arguments = self.arguments(method, request, headerFile);
         arguments.push("--speed-limit");
         arguments.push("1");
@@ -134,13 +142,11 @@ class Transport {  // one curl process per request
         arguments.push(Strings.fromInt(self.stallSeconds));
         arguments.push("--output");
         arguments.push(bodyFile);
-        if (offset > 0LL) {
-            arguments.push("--continue-at");
-            arguments.push(f"{offset}");
-        }
         arguments.push("--upload-file");
-        arguments.push(path);
-        ExecResult ran = ChildProcess.run("curl", arguments);
-        return self.finish(ran, request, headerFile, bodyFile, true);
+        arguments.push(offset > 0LL ? "-" : path);
+        if (offset == 0LL) { return self.finish(ChildProcess.run("curl", arguments), request, headerFile, bodyFile, true); }
+        Vector<string> piped = ["-c", "first=$1; file=$2; shift 2; tail -c \"+$first\" -- \"$file\" | curl \"$@\"", "sh", f"{offset + 1LL}", path];
+        piped.extend(arguments);
+        return self.finish(ChildProcess.run("sh", piped), request, headerFile, bodyFile, true);
     }
 }

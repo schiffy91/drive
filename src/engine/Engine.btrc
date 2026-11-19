@@ -80,6 +80,12 @@ class Engine {
         self.readers = Readers(store.temporary("../readers.json"));
         self.uploader = Uploader(api, store);
         self.mirror.uploader = self.uploader;
+        api.sessions = store.temporary("../uploads");  // an upload that is cut off, or outlives this process, goes on from where the Drive has it
+        if (FileSystem.isDir(api.sessions)) {  // the Drive keeps a session for a week: an older one is of no use
+            for name in FileSystem.listDir(api.sessions) {
+                if (StorePaths.nowSeconds() - FileSystem.stat(f"{api.sessions}/{name}").mtimeSeconds > 6LL * 86400LL) { FileSystem.removeIfExists(f"{api.sessions}/{name}"); }
+            }
+        }
     }
 
     private string failed(string id) {

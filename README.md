@@ -99,9 +99,9 @@ Every test uses `drive-fake`. Nothing in this repository talks to a real Drive.
 
 | Check | What it proves |
 |---|---|
-| `unit-planner`, `unit-remote` | the rule for each pair of local and remote states; the API client against the fake, with failures, expiry and paging, and nothing secret on a command line |
+| `unit-planner`, `unit-remote` | the rule for each pair of local and remote states; the API client against the fake, with failures, expiry and paging, an upload cut off and taken up again, and nothing secret on a command line |
 | `vm-store`, `vm-door`, `vm-readers`, `vm-writes` | the store's facts on a real filesystem; the mount, also against an engine of another version; who may cause a download; uploads, conflicts and the delete brake |
-| `vm-pinning`, `vm-placement`, `vm-crashes`, `vm-convergence` | pinned folders, a large one arriving without being held in memory, and a start that does not look at each file; a folder on another volume; an engine killed mid-read and mid-upload, and what the status says before it listens; two clients ending with one tree |
+| `vm-pinning`, `vm-placement`, `vm-crashes`, `vm-convergence` | pinned folders, a large one arriving without being held in memory, and a start that does not look at each file; a folder on another volume; an engine killed mid-read and mid-upload, an upload cut off that goes on after the engine's restart, and what the status says before it listens; two clients ending with one tree |
 | `vm-held`, `vm-held-placed`, `vm-refusals` | held deletions across an engine restart and a reboot; yes and no inside a placed folder; a full disk, a full Drive, a withdrawn sign-in, a Drive that keeps saying later, an unreadable change, a forgotten feed position and a store in another format |
 | `vm-dialog`, `vm-tray`, `vm-module` | the window that asks; the tray icon and its window; the units `services.drive` generates |
 | `vm-mutations` | each safety rule cut out of the client in turn: the scenario that covers it must then fail |
@@ -113,7 +113,20 @@ GitHub; `vm` runs only there.
 For the editor and a local compiler, `make testkit` links btrc's test library at `tests/testkit`, where a
 Nix build places it.
 
+## An upload that is cut off
+
+An upload goes to a session the Drive opens for it, and the session's address is kept in the store
+(`uploads/`, readable by the owner only) until the file is there. If the line drops, or the engine stops,
+the next try asks the session how many bytes it has and sends the rest, for as long as the file is the
+size and time it was; a file that changed meanwhile, or a session the Drive no longer has, starts anew. A
+session that turns out to hold the whole file gives the file back, so an upload whose answer was lost is
+not sent twice. curl resumes no HTTP upload by itself, so the rest of the file is piped to it with its place
+and length said. Against the real Drive this path has not run yet: it is exercised against the fake only.
+
 ## Known gaps
+
+- While a file is being sent the engine answers nothing else: one upload is still one blocking request,
+  now from the byte the Drive has. Sending it as a child the loop watches is not done.
 
 - A program that deletes fewer files per pass of the engine than the limit is never held: the brake counts
   what is pending at once, not what was deleted over time.
