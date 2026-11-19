@@ -22,7 +22,7 @@ let
     name = "drive";
     src = src "Main.btrc";
     programs.drive = "Main.btrc";
-    runtimeInputs = [ pkgs.curl pkgs.coreutils pkgs.bash ];  # every request is one curl process; adoption sums files with sha256sum; the rest of a cut-off upload is piped to curl
+    runtimeInputs = [ pkgs.curl pkgs.coreutils pkgs.bash pkgs.findutils ];  # every request is one curl process; adoption sums files with sha256sum; the rest of a cut-off upload is piped to curl
     postInstall = "install -Dm644 ${../src/readers.deny} $out/share/drive/readers.deny";  # the default list of programs that never download
   };
   tray = build {  # the icon in the system tray

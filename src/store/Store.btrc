@@ -3,6 +3,7 @@ import Library.FileSystem;
 import Library.IO;
 import Library.JSON;
 import Library.Map;
+import Library.Process;
 import Library.Strings;
 import Library.Vector;
 
@@ -508,7 +509,17 @@ class Store {
     }
 
     // Find the folders already in the tree, after a restart.
+    // The folders' entries are read from disk by eight walkers at once before the one walk below, which then
+    // finds them in memory. After a boot, or when other work has pushed the tree out of memory, one reader
+    // waits for the disk once for each of 35,000 folders (4.5 s on the desktop); the disk serves eight as
+    // readily as one. With the tree in memory it costs a tenth of a second. Its failing changes nothing.
+    private void readAhead() {
+        string walk = "cd \"$1\" 2>/dev/null && { find tree -mindepth 4 -maxdepth 4 -type d -print0; find ids -mindepth 1 -maxdepth 1 -type d -print0; } 2>/dev/null | xargs -0 -r -P 8 -n 8 find > /dev/null 2>&1";  // four levels down the work is in a few hundred parts, none of them most of the tree
+        ChildProcess.run("sh", ["-c", walk, "sh", self.root], timeoutMilliseconds=30000);
+    }
+
     public void scan() {
+        self.readAhead();
         self.folders.clear();
         StoreFile? top = StoreFile.open(self.tree());
         string id = top == null ? "" : top.attribute("id");
