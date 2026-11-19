@@ -101,6 +101,13 @@ let
       sees = "FAIL: the engine's memory stayed far below one piece";
     }
     {
+      rule = "the engine does not sleep on its one thread while the Drive says later";
+      scenario = ../refusals;
+      mutation = cut "Main.btrc" "api.waits = false;" "api.waits = true;";
+      at = "A Drive that keeps saying later does not keep the engine from answering";
+      sees = "FAIL: the engine itself answers";
+    }
+    {
       rule = "starting reads the folders and does not look at each file";
       scenario = ../pinning;
       mutation = cut "store/Store.btrc" ''if (!entry.startsWith("d")) { continue; }  // a folder, said by the listing: no look at each of the files'' ''if (FileSystem.isSymlink(f"{path}/{entry.substring(1, entry.len() - 1)}") || !FileSystem.isDir(f"{path}/{entry.substring(1, entry.len() - 1)}")) { continue; }'';

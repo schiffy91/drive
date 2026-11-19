@@ -148,7 +148,9 @@ class Drive {
     class void engine(CLICommandLine options) {
         string store = options.option("--store", "");
         if (store.isEmpty()) { throw "usage: drive engine --store DIR [--runtime DIR] [--chunk BYTES] [--follow SECONDS]"; }
-        Engine engine = Engine(Drive.api(options), Store(store), Drive.runtime(options) + "/door.sock");
+        DriveApi api = Drive.api(options);
+        api.waits = false;  // the engine has one thread: a Drive that says "later" must not put the mount and the commands to sleep
+        Engine engine = Engine(api, Store(store), Drive.runtime(options) + "/door.sock");
         engine.chunk = options.option("--chunk", "4194304").toLong();
         engine.followSeconds = options.option("--follow", "30").toInt();
         if (engine.chunk < 4096LL || engine.chunk % 4096LL != 0LL) { throw "--chunk must be a multiple of 4096"; }

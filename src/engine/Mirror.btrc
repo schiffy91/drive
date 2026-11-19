@@ -35,6 +35,16 @@ class Mirror {
 
     // The whole Drive into an empty store. The feed position is taken first, so nothing that changes meanwhile is lost.
     public void build() {
+        bool waited = self.api.waits;
+        self.api.waits = true;  // a listing of the whole Drive is not started over for one busy answer
+        try { self.list(); } catch (string error) {
+            self.api.waits = waited;
+            throw error;
+        }
+        self.api.waits = waited;
+    }
+
+    private void list() {
         string? root = self.api.rootId();
         string? start = self.api.startToken();
         if (root == null || start == null) { throw f"Cannot reach the Drive: {self.why()}"; }

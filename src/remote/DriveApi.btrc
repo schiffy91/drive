@@ -85,6 +85,9 @@ class DriveApi {
     public string tokenUrl = "https://oauth2.googleapis.com/token";
     public int attempts = 6;
     public int backoffMilliseconds = 500;  // doubles per attempt
+    public bool waits = true;  // sleep between attempts; the engine's loop must not, and asks again when `quietUntil` has passed
+    public long long quietUntil = 0LL;  // monotonic milliseconds: not before this, when `waits` is off
+    private int strikes = 0;  // failures worth retrying since the last answer
     public string signInFile = "";  // the sign-in, when it is a file of this client's own: read again before each new token, so signing in again needs no restart
     public DriveError? failure = null;  // why the last call returned nothing
 
@@ -130,12 +133,21 @@ class DriveApi {
         return DriveError(DRIVE_INVALID, response.status, message);
     }
 
-    private void pause(int attempt, TransportResponse response) {
-        long long wait = (long long)self.backoffMilliseconds << attempt;
+    // True when the caller may try again now. A caller that waits has slept; one that does not is told no,
+    // and `quietUntil` says when the next call will really ask the Drive.
+    private bool pause(int attempt, TransportResponse response) {
+        int step = self.waits ? attempt : (self.strikes < 5 ? self.strikes : 5);
+        long long wait = (long long)self.backoffMilliseconds << step;
         string asked = response.header("retry-after");
         if (!asked.isEmpty() && asked.toLong() * 1000LL > wait) { wait = asked.toLong() * 1000LL; }
         if (wait > 60000LL) { wait = 60000LL; }
-        Timer.sleepMillis((int)wait);
+        self.strikes++;
+        if (self.waits) {
+            Timer.sleepMillis((int)wait);
+            return true;
+        }
+        self.quietUntil = MonotonicClock.milliseconds() + wait;
+        return false;
     }
 
     private Vector<string> headers(Vector<string> extra) {
@@ -147,18 +159,17 @@ class DriveApi {
     // kind: 0 text call, 1 download to path, 2 upload from path. Retries what is worth retrying.
     private TransportResponse? exchange(int kind, string method, string url, Vector<string> extra, string body, string path, long long offset = 0LL) {
         bool reauthorized = false;
+        if (!self.waits && MonotonicClock.milliseconds() < self.quietUntil) { return null; }  // `failure` still says why
         for (int attempt = 0; attempt < self.attempts; attempt++) {
             if (!self.authorize()) {
                 DriveError? refused = self.failure;
-                if (refused != null && refused.transient() && attempt + 1 < self.attempts) {
-                    self.pause(attempt, TransportResponse());
-                    continue;
-                }
+                if (refused != null && refused.transient() && attempt + 1 < self.attempts && self.pause(attempt, TransportResponse())) { continue; }
                 return null;
             }
             TransportResponse response = kind == 0 ? self.transport.send(method, url, self.headers(extra), body) : kind == 1 ? self.transport.download(url, self.headers(extra), path) : self.transport.upload(method, url, self.headers(extra), path, offset);
             if (response.ok() || response.status == 308) {
                 self.failure = null;
+                self.strikes = 0;
                 return response;
             }
             if (kind == 1 && response.answered()) { response.body = FileSystem.readText(path); }  // the error went to the file
@@ -169,8 +180,7 @@ class DriveApi {
                 self.accessToken = "";
                 continue;
             }
-            if (!error.transient() || attempt + 1 >= self.attempts) { return null; }
-            self.pause(attempt, response);
+            if (!error.transient() || attempt + 1 >= self.attempts || !self.pause(attempt, response)) { return null; }
         }
         return null;
     }

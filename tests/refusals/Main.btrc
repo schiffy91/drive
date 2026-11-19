@@ -155,6 +155,27 @@ class RefusalScenario {
         Check.equal(self.machine.succeed("systemctl show -p MainPID --value drive-engine.service").trim(), process, "and the engine is the one that was running all along");
     }
 
+    // The engine has one thread. Waiting out a busy Drive on it kept the mount and every command waiting
+    // too, for up to fifteen seconds a call.
+    private void busyDrive() {
+        print("A Drive that keeps saying later does not keep the engine from answering");
+        self.drive.control("fail?count=100000&status=503");
+        self.machine.succeed(f"echo 'while the Drive is busy' >> {self.mount}/notes.txt");
+        self.waitsFor("^offline");
+        int slowest = 0;
+        for (int look = 0; look < 8; look++) {
+            var took = self.machine.succeed(f"start=$(date +%s%N); drive status --runtime {self.drive.runtime} > /tmp/busy-status; echo $(( ($(date +%s%N) - start) / 1000000 ))").trim().toInt();
+            if (took > slowest) { slowest = took; }
+            Check.that(self.machine.succeed("cat /tmp/busy-status").startsWith("offline"), "the engine itself answers, and says it cannot reach the Drive");
+            self.machine.succeed("sleep 1");
+        }
+        Check.that(slowest < 1000, f"every status came within a second: the slowest took {slowest} ms");
+        self.machine.succeed(f"timeout 5 cat {self.mount}/Docs/kept.bin > /dev/null");  // and the mount serves what is downloaded
+        self.drive.control("fail?count=0");
+        self.waitsFor("^online.* 0 changes to send", 120);
+        Check.that(self.drive.onDrive("notes.txt", self.drive.sha(f"{self.mount}/notes.txt")), "what was written meanwhile is sent once the Drive answers");
+    }
+
     private void nothingLost(string what) {
         self.machine.succeed(f"cmp {self.mount}/Docs/kept.bin {self.source}/kept");
         Check.equal(self.machine.succeed(f"ls {self.store}/trash | wc -l").trim(), "0", what);
@@ -201,6 +222,7 @@ class RefusalScenario {
         self.diskFull();
         self.driveFull();
         self.signedOut();
+        self.busyDrive();
         self.doubted();
     }
 }

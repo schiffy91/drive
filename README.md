@@ -102,7 +102,7 @@ Every test uses `drive-fake`. Nothing in this repository talks to a real Drive.
 | `unit-planner`, `unit-remote` | the rule for each pair of local and remote states; the API client against the fake, with failures, expiry and paging, and nothing secret on a command line |
 | `vm-store`, `vm-door`, `vm-readers`, `vm-writes` | the store's facts on a real filesystem; the mount, also against an engine of another version; who may cause a download; uploads, conflicts and the delete brake |
 | `vm-pinning`, `vm-placement`, `vm-crashes`, `vm-convergence` | pinned folders, a large one arriving without being held in memory, and a start that does not look at each file; a folder on another volume; an engine killed mid-read and mid-upload, and what the status says before it listens; two clients ending with one tree |
-| `vm-held`, `vm-held-placed`, `vm-refusals` | held deletions across an engine restart and a reboot; yes and no inside a placed folder; a full disk, a full Drive, a withdrawn sign-in, an unreadable change, a forgotten feed position and a store in another format |
+| `vm-held`, `vm-held-placed`, `vm-refusals` | held deletions across an engine restart and a reboot; yes and no inside a placed folder; a full disk, a full Drive, a withdrawn sign-in, a Drive that keeps saying later, an unreadable change, a forgotten feed position and a store in another format |
 | `vm-dialog`, `vm-tray`, `vm-module` | the window that asks; the tray icon and its window; the units `services.drive` generates |
 | `vm-mutations` | each safety rule cut out of the client in turn: the scenario that covers it must then fail |
 
@@ -125,6 +125,10 @@ Nix build places it.
 - A pinned file whose download ends in an error other than "offline" leaves the queue until the engine
   restarts.
 - A disk with no room at all reads as offline, because the feed position cannot be written.
+- A busy or unreachable Drive is not waited out on the engine's one thread: a call that fails that way
+  returns at once and the next is not made before a growing pause (half a second up to sixteen, or what
+  the Drive asked for) has passed, during which the mount and the commands are answered as usual. Only
+  the first listing of the whole Drive still waits in place.
 - The engine does one transfer at a time and answers the mount and commands between transfers. While one
   large file is on its way it answers nobody: opening a file that is not downloaded waits for it, and
   `drive status` says what the engine last wrote down, marked as such.
