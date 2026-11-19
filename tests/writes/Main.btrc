@@ -207,6 +207,7 @@ class WritesScenario {
         self.machine.succeed(f"echo later > {self.mount}/later.txt && mkdir {self.mount}/Later && echo inside > {self.mount}/Later/inside.txt");
         self.drive.startEngine(self.engine);
         self.machine.waitUntil(f"curl -sS -X POST '{self.drive.fake}/__control/dump' | python3 /var/lib/drive-test/entries.py inside.txt | grep -q ' False$'");
+        self.machine.waitUntil(f"curl -sS -X POST '{self.drive.fake}/__control/dump' | python3 /var/lib/drive-test/entries.py later.txt | grep -q ' False$'");  // files go up one at a time, by name: this one after the other
         Check.that(self.drive.onDrive("later.txt", self.drive.sha(self.mount + "/later.txt")), "nothing written meanwhile is lost");
     }
 
