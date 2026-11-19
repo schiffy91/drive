@@ -110,7 +110,7 @@ let
     {
       rule = "starting reads the folders and does not look at each file";
       scenario = ../pinning;
-      mutation = cut "store/Store.btrc" ''if (!entry.startsWith("d")) { continue; }  // a folder, said by the listing: no look at each of the files'' ''if (FileSystem.isSymlink(f"{path}/{entry.substring(1, entry.len() - 1)}") || !FileSystem.isDir(f"{path}/{entry.substring(1, entry.len() - 1)}")) { continue; }'';
+      mutation = cut "store/Store.btrc" ''for entry in StorePaths.kinds(path, true) {  // the folders alone, said by the listing: nothing is made or asked for each of the files'' ''for entry in StorePaths.kinds(path) { if (FileSystem.isSymlink(f"{path}/{entry.substring(1, entry.len() - 1)}") || !FileSystem.isDir(f"{path}/{entry.substring(1, entry.len() - 1)}")) { continue; }'';
       at = "An engine that starts reads the folders and does not look at each file";
       sees = "FAIL: with 3,000 files in one folder, starting took";
     }
