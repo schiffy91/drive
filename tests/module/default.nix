@@ -39,7 +39,7 @@ in assert tray.wantedBy == [ "graphical-session.target" ] && pkgs.lib.hasSuffix 
   && !profile.systemd.services.drive-door.restartIfChanged && profile.systemd.services.drive-engine.restartIfChanged
   && !profile.systemd.services.drive-engine.stopIfChanged
   && !(pkgs.lib.hasInfix "network-online.target" profile.systemd.units."drive-engine.service".text)  # the boot does not wait for the network on the engine's account
-  && !(pkgs.lib.hasInfix "network-online.target" profile.systemd.units."drive-push.service".text)
+  && pkgs.lib.all (name: !(pkgs.lib.hasInfix "network-online.target" profile.systemd.units.${name}.text)) (pkgs.lib.filter (pkgs.lib.hasPrefix "drive-") (builtins.attrNames profile.systemd.units))
   && pkgs.lib.hasInfix "X-RestartIfChanged=false" profile.systemd.units."drive-door.service".text;  # a switch leaves the mount up and restarts the engine behind it  # the tray's icon starts with the desktop session and is told where the engine is
 (import ../lib/vm-test.nix { inherit pkgs inputs; }) {
   name = "drive-module";
