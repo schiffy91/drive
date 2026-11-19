@@ -17,6 +17,18 @@ class TransportResponse {
     public string header(string name) { return self.headers.getOrDefault(name.toLower(), ""); }
 }
 
+// An upload that goes on beside its caller: the curl that carries it, and the files its answer comes in.
+class TransportFlight {
+    public BackgroundProcess process;
+    public string request = "";
+    public string headerFile = "";
+    public string bodyFile = "";
+    public string statusFile = "";
+    public string errorFile = "";
+
+    public TransportFlight(BackgroundProcess process) { self.process = process; }
+}
+
 class Transport {  // one curl process per request
     private string scratch;
     private int sequence = 0;
@@ -123,9 +135,10 @@ class Transport {  // one curl process per request
         return statuses;
     }
 
-    // The file from `offset` on. curl resumes no HTTP upload by itself, so for the rest of a file it is given
-    // those bytes on its input, and told where they belong and how many they are.
-    public TransportResponse upload(string method, string url, Vector<string> headers, string path, long long offset = 0LL) {
+    // The file from `offset` on, sent by a curl that runs beside the caller. curl resumes no HTTP upload by
+    // itself, so for the rest of a file it is given those bytes on its input, and told where they belong
+    // and how many they are. The answer is read with `landed` once `flying` says the curl has ended.
+    public TransportFlight begin(string method, string url, Vector<string> headers, string path, long long offset = 0LL) {
         string headerFile = self.temporary("headers");
         string bodyFile = self.temporary("body");
         Vector<string> said = [];
@@ -144,9 +157,38 @@ class Transport {  // one curl process per request
         arguments.push(bodyFile);
         arguments.push("--upload-file");
         arguments.push(offset > 0LL ? "-" : path);
-        if (offset == 0LL) { return self.finish(ChildProcess.run("curl", arguments), request, headerFile, bodyFile, true); }
-        Vector<string> piped = ["-c", "first=$1; file=$2; shift 2; tail -c \"+$first\" -- \"$file\" | curl \"$@\"", "sh", f"{offset + 1LL}", path];
-        piped.extend(arguments);
-        return self.finish(ChildProcess.run("sh", piped), request, headerFile, bodyFile, true);
+        string statusFile = self.temporary("status");
+        string errorFile = self.temporary("errors");
+        string sending = offset > 0LL ? "tail -c \"+$first\" -- \"$file\" | curl \"$@\"" : "curl \"$@\"";
+        Vector<string> script = ["-c", f"status=$1; errors=$2; first=$3; file=$4; shift 4; {sending} > \"$status\" 2> \"$errors\"", "sh", statusFile, errorFile, f"{offset + 1LL}", path];
+        script.extend(arguments);
+        TransportFlight flight = TransportFlight(BackgroundProcess.start("sh", script, killOnDrop=true));
+        flight.request = request;
+        flight.headerFile = headerFile;
+        flight.bodyFile = bodyFile;
+        flight.statusFile = statusFile;
+        flight.errorFile = errorFile;
+        return flight;
+    }
+
+    public bool flying(TransportFlight flight) { return flight.process.running(); }
+
+    public TransportResponse landed(TransportFlight flight) {
+        int code = flight.process.wait();
+        string status = FileSystem.exists(flight.statusFile) ? FileSystem.readText(flight.statusFile) : "";
+        string errors = FileSystem.exists(flight.errorFile) ? FileSystem.readText(flight.errorFile) : "";
+        FileSystem.removeIfExists(flight.statusFile);
+        FileSystem.removeIfExists(flight.errorFile);
+        return self.finish(ExecResult(code, status, errors, "curl"), flight.request, flight.headerFile, flight.bodyFile, true);
+    }
+
+    public void abandon(TransportFlight flight) {  // its curl is stopped and nothing of it is kept
+        flight.process.stop();
+        for file in [flight.statusFile, flight.errorFile, flight.request, flight.headerFile, flight.bodyFile] { FileSystem.removeIfExists(file); }
+    }
+
+    public TransportResponse upload(string method, string url, Vector<string> headers, string path, long long offset = 0LL) {
+        TransportFlight flight = self.begin(method, url, headers, path, offset);
+        return self.landed(flight);
     }
 }

@@ -77,6 +77,17 @@ class DriveCredentials {
     }
 }
 
+// An upload on its way: the session it goes to, from which byte, and the curl that carries it when it was
+// begun and left to run. With `file` set the Drive turned out to have all of it already.
+class DriveSending {
+    public string kept = "";  // where the session's address is kept, when sessions are
+    public string session = "";
+    public long long offset = 0LL;
+    public long long size = 0LL;
+    public DriveFile? file = null;
+    public TransportFlight? flight = null;
+}
+
 class DriveApi {
     private Transport transport;
     private DriveCredentials credentials;
@@ -349,7 +360,7 @@ class DriveApi {
     // Send a file's content: a new file under `parent`, or new content for `id`. One of the two is empty.
     // With `sessions` set, a sending that was cut off, by a lost line or by this program stopping, is taken
     // up again from the byte the Drive says it has, for as long as the file is the size and time it was.
-    public DriveFile? upload(string id, string parent, string name, string path, long long modified) {
+    private DriveSending? opened(string id, string parent, string name, string path, long long modified) {
         long long size = FileSystem.stat(path).size;
         string kept = self.sessions.isEmpty() ? "" : f"{self.sessions}/{SHA256.digest(id.isEmpty() ? f"{parent}/{name}" : id)}";
         string mark = f"{size} {modified}";
@@ -361,7 +372,9 @@ class DriveApi {
                 offset = self.heldBy(lines.get(0), size);
                 if (self.landed != null) {
                     FileSystem.removeIfExists(kept);
-                    return self.landed;
+                    DriveSending arrived = DriveSending();
+                    arrived.file = self.landed;
+                    return arrived;
                 }
                 DriveError? why = self.failure;
                 if (offset < 0LL && why != null && why.transient()) { return null; }  // the Drive could not be asked: the session waits
@@ -396,6 +409,84 @@ class DriveApi {
                 FileSystem.writeAtomic(kept, f"{session}\n{mark}\n", 0o600);  // whoever has the session's address can write the file
             }
         }
+        DriveSending going = DriveSending();
+        going.kept = kept;
+        going.session = session;
+        going.offset = offset;
+        going.size = size;
+        return going;
+    }
+
+    // What a sending came to: the file, or null with `failure` saying why. A session that was refused is
+    // forgotten, so the next try starts anew; one that could not be reached is kept.
+    private DriveFile? concluded(string kept, TransportResponse? sent) {
+        if (sent != null && sent.status == 308) {  // answered, and not all of it there
+            self.fail(DRIVE_NETWORK, 308, "the Drive has only part of the upload");
+            sent = null;
+        }
+        if (sent == null) {
+            DriveError? why = self.failure;
+            if (!kept.isEmpty() && (why == null || !why.transient())) { FileSystem.removeIfExists(kept); }
+            return null;
+        }
+        if (!kept.isEmpty()) { FileSystem.removeIfExists(kept); }
+        JSONValue answer = JSONValue.parse(sent.body);
+        return self.described(answer.isError() ? null : answer);
+    }
+
+    // The same sending begun and left to run, for a caller that has other things to answer meanwhile:
+    // `sending` says whether it is still on its way, and `sent` is what it came to. Null: it could not be
+    // begun, and `failure` says why.
+    public DriveSending? send(string id, string parent, string name, string path, long long modified) {
+        DriveSending? going = self.opened(id, parent, name, path, modified);
+        if (going == null || going.file != null) { return going; }
+        if (!self.waits && MonotonicClock.milliseconds() < self.quietUntil) { return null; }
+        if (!self.authorize()) { return null; }
+        going.flight = self.transport.begin("PUT", going.session, self.headers(["Content-Type: application/octet-stream"]), path, going.offset);
+        return going;
+    }
+
+    public bool sending(DriveSending going) {
+        TransportFlight? flight = going.flight;
+        return flight != null && self.transport.flying(flight);
+    }
+
+    public DriveFile? sent(DriveSending going) {
+        if (going.file != null) { return going.file; }
+        TransportFlight? flight = going.flight;
+        if (flight == null) { return null; }
+        TransportResponse response = self.transport.landed(flight);
+        going.flight = null;
+        if (response.ok() || response.status == 308) {
+            self.failure = null;
+            self.strikes = 0;
+            return self.concluded(going.kept, response);
+        }
+        DriveError error = self.classify(response);
+        self.failure = error;
+        if (error.kind == DRIVE_UNAUTHORIZED) {  // the sign-in ran out on the way: the next try renews it and goes on from where this one got
+            self.accessToken = "";
+            self.fail(DRIVE_NETWORK, 401, "the sign-in ran out while a file was on its way");
+        } else if (error.transient()) {
+            self.pause(0, response);
+        }
+        return self.concluded(going.kept, null);
+    }
+
+    public void abandon(DriveSending going) {  // its curl is stopped; the session stays for another try
+        TransportFlight? flight = going.flight;
+        if (flight != null) { self.transport.abandon(flight); }
+        going.flight = null;
+    }
+
+    public DriveFile? upload(string id, string parent, string name, string path, long long modified) {
+        DriveSending? going = self.opened(id, parent, name, path, modified);
+        if (going == null) { return null; }
+        if (going.file != null) { return going.file; }
+        string kept = going.kept;
+        string session = going.session;
+        long long offset = going.offset;
+        long long size = going.size;
         TransportResponse? sent = null;
         int allowed = self.attempts;
         for (int attempt = 0; attempt < allowed; attempt++) {
@@ -414,17 +505,6 @@ class DriveApi {
             DriveError? why = self.failure;
             if (sent != null || !self.waits || why == null || !why.transient()) { break; }
         }
-        if (sent != null && sent.status == 308) {  // answered, and not all of it there
-            self.fail(DRIVE_NETWORK, 308, "the Drive has only part of the upload");
-            sent = null;
-        }
-        if (sent == null) {
-            DriveError? why = self.failure;
-            if (!kept.isEmpty() && (why == null || !why.transient())) { FileSystem.removeIfExists(kept); }  // refused: the next try starts anew
-            return null;
-        }
-        if (!kept.isEmpty()) { FileSystem.removeIfExists(kept); }
-        JSONValue answer = JSONValue.parse(sent.body);
-        return self.described(answer.isError() ? null : answer);
+        return self.concluded(kept, sent);
     }
 }

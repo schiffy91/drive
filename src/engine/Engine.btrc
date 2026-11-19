@@ -635,13 +635,16 @@ class Engine {
                 self.wantAll();
                 self.due = 0LL;
             }
-            if (MonotonicClock.milliseconds() >= self.due) {
+            // The feed is not read while a file is on its way: the Drive may tell of that very file before its
+            // sending has been written down here, and it would be taken for a stranger of the same name.
+            if (MonotonicClock.milliseconds() >= self.due && !self.uploader.sending()) {
                 self.current();
                 self.due = self.behind ? 0LL : MonotonicClock.milliseconds() + (long long)self.followSeconds * 1000LL;
             }
             long long wait = self.due - MonotonicClock.milliseconds();
             bool busy = self.online && !self.paused && self.wanted.len > 0 && MonotonicClock.milliseconds() >= self.roomDue;  // pinned files to fetch: only look, do not wait
-            int ready = Channel.wait(door == null ? -1 : door.handle(), listener.handle(), -1, busy || (self.online && self.uploader.unfinished) ? 0 : door == null ? 500 : wait < 0LL ? 0 : wait > 1000LL ? 1000 : (int)wait);
+            // While a file is on its way the engine looks ten times a second whether it has arrived, and answers the mount and commands in between.
+            int ready = Channel.wait(door == null ? -1 : door.handle(), listener.handle(), -1, busy || (self.online && self.uploader.unfinished) ? 0 : self.uploader.sending() ? 100 : door == null ? 500 : wait < 0LL ? 0 : wait > 1000LL ? 1000 : (int)wait);
             if ((ready & 1) != 0 && door != null) {
                 while (door.isOpen()) {
                     string message = door.receive();

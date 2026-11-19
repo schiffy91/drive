@@ -210,6 +210,21 @@ class WritesScenario {
     }
 
     private void whileSending() {
+        print("One long file on its way up keeps the engine from nothing");
+        self.drive.control("log?clear=1");
+        self.drive.control("slow?milliseconds=8000");  // the Drive takes eight seconds over this one file
+        self.machine.succeed(f"echo long > {self.mount}/long.txt");
+        self.machine.waitUntil(f"curl -sS -X POST '{self.drive.fake}/__control/log' | grep -q 'sent .* from 0'", 60);
+        string during = self.machine.succeed(f"timeout 1 drive status --runtime {self.drive.runtime}");  // the engine itself answers, within a second, while its curl waits
+        Check.that(during.startsWith("online") && !during.contains(" 0 changes to send"), f"the engine answers while the file is still on its way: {during.trim()}");
+        Check.that(self.drive.remote("long.txt").isEmpty() || !during.contains(" 0 changes to send"), "and counts it as still to send");
+        self.drive.control("slow?milliseconds=0");
+        try { self.machine.waitUntil(f"drive status --runtime {self.drive.runtime} | grep -q ' 0 changes to send'", 60); } catch (string error) {
+            print(self.machine.succeed("journalctl -b --no-pager | grep -E 'drive\\[|drive-test-engine|drive:' | tail -25 || true"));
+            throw error;
+        }
+        Check.that(!self.drive.remote("long.txt").isEmpty() && !self.drive.id("long.txt").isEmpty(), "and when it has arrived it is written down here");
+
         print("A long batch on its way up keeps the engine from nothing else");
         self.drive.control("slow?milliseconds=1500");  // sixteen files, a second and a half each
         self.machine.succeed(f"mkdir {self.mount}/Batch && for n in $(seq 1 16); do echo $n > {self.mount}/Batch/s$n.txt; done");

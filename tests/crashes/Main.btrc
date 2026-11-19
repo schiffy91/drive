@@ -89,7 +89,7 @@ class CrashScenario {
         self.drive.control("cut?bytes=1000000&then=fail");  // the line drops a third of the way, and stays down
         self.machine.succeed(f"cp {self.drive.source}/long {self.mount}/Game/long.bin");
         self.machine.waitUntil(f"curl -sS -X POST '{self.drive.fake}/__control/log' | grep -q 'from 0: 3000000 bytes'", 90);
-        Check.equal(self.machine.succeed(f"ls {self.drive.store}/uploads | wc -l").trim(), "1", "the upload's session is kept on disk");
+        Check.equal(self.machine.succeed(f"grep -l '^3000000 ' {self.drive.store}/uploads/* | wc -l").trim(), "1", "the upload's session is kept on disk");
         self.machine.succeed("systemctl kill --signal=KILL drive-engine.service");
         self.restart();
         self.drive.control("fail?count=0");
@@ -98,7 +98,7 @@ class CrashScenario {
         Check.that(log.contains("from 1000000: 2000000 bytes"), f"after the restart only what the Drive did not have is sent: {log}");
         Check.equal(self.machine.succeed(f"curl -sS -X POST '{self.drive.fake}/__control/log' | grep -c 'POST /upload/drive/v3/files' || true").trim(), "1", "in the session opened before it");
         Check.equal(self.count("long.bin"), "1", "the Drive holds the file once");
-        self.machine.waitUntil(f"test -z \"$(ls {self.drive.store}/uploads)\"", 30);
+        self.machine.waitUntil(f"! grep -q '^3000000 ' {self.drive.store}/uploads/* 2>/dev/null", 30);  // and its session is forgotten
     }
 
     public void check() {

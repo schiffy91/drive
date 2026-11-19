@@ -100,7 +100,7 @@ Every test uses `drive-fake`. Nothing in this repository talks to a real Drive.
 | Check | What it proves |
 |---|---|
 | `unit-planner`, `unit-remote` | the rule for each pair of local and remote states; the API client against the fake, with failures, expiry and paging, an upload cut off and taken up again, and nothing secret on a command line |
-| `vm-store`, `vm-door`, `vm-readers`, `vm-writes` | the store's facts on a real filesystem; the mount, also against an engine of another version; who may cause a download; uploads, conflicts and the delete brake |
+| `vm-store`, `vm-door`, `vm-readers`, `vm-writes` | the store's facts on a real filesystem; the mount, also against an engine of another version; who may cause a download; uploads, the engine answering while a long one is on its way, conflicts and the delete brake |
 | `vm-pinning`, `vm-placement`, `vm-crashes`, `vm-convergence` | pinned folders, a large one arriving without being held in memory, and a start that does not look at each file; a folder on another volume; an engine killed mid-read and mid-upload, an upload cut off that goes on after the engine's restart, and what the status says before it listens; two clients ending with one tree |
 | `vm-held`, `vm-held-placed`, `vm-refusals` | held deletions across an engine restart and a reboot; yes and no inside a placed folder; a full disk, a full Drive, a withdrawn sign-in, a Drive that keeps saying later, an unreadable change, a forgotten feed position and a store in another format |
 | `vm-dialog`, `vm-tray`, `vm-module` | the window that asks; the tray icon and its window; the units `services.drive` generates |
@@ -123,10 +123,15 @@ session that turns out to hold the whole file gives the file back, so an upload 
 not sent twice. curl resumes no HTTP upload by itself, so the rest of the file is piped to it with its place
 and length said. Against the real Drive this path has not run yet: it is exercised against the fake only.
 
+A file is sent by a curl that runs beside the engine. The engine looks ten times a second whether it has
+arrived and meanwhile answers the mount and the commands, so a large upload holds up nothing but the next
+upload and the reading of the remote feed. When the curl ends, what the Drive made of the file is written
+down exactly as before; a file deleted here while it was on its way is trashed on the Drive again.
+
 ## Known gaps
 
-- While a file is being sent the engine answers nothing else: one upload is still one blocking request,
-  now from the byte the Drive has. Sending it as a child the loop watches is not done.
+- While a file is on its way the remote feed is not read, so a change made elsewhere arrives after the
+  upload has; and one file is sent at a time.
 
 - A program that deletes fewer files per pass of the engine than the limit is never held: the brake counts
   what is pending at once, not what was deleted over time.

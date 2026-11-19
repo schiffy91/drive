@@ -26,6 +26,10 @@ class Uploader {
     private Vector<string> later = [];  // looked at this round and not finished
     private Vector<string> removals = [];  // Drive ids deleted here
     private bool allowed = false;  // a person said the waiting deletions may go
+    private DriveSending? flight = null;  // the one file on its way: it is sent by a curl beside the engine, which goes on answering
+    private string flightPath = "";
+    private string flightBefore = "";  // the file's shape when the sending began: a write since then is a change still to send
+    private bool flightNew = false;  // a new file, as against new content for one the Drive has
     public string machine = "this-machine";
     public Vector<string> ignored = [];  // names kept here and never sent: "*.part", ".~lock.*", an exact name
     public int quietSeconds = 5;
@@ -295,8 +299,64 @@ class Uploader {
         return null;
     }
 
+    public bool sending() { return self.flight != null; }
+
+    // The file on its way, when its curl has ended: what the Drive made of it is written down here, as it
+    // was when one call sent a whole file. A failure leaves the path waiting, and its session to go on from.
+    private void land() {
+        DriveSending? going = self.flight;
+        if (going == null || self.api.sending(going)) { return; }
+        self.flight = null;
+        string path = self.flightPath;
+        DriveFile? sent = self.api.sent(going);
+        if (sent == null) {
+            if (self.flightNew) { self.doubted.put(path, true); }
+            self.fails(f"uploading {path}");
+            return;
+        }
+        string full = self.store.real(path);
+        StoreFile? opened = FileSystem.isSymlink(full) || !FileSystem.exists(full) ? null : StoreFile.open(full);
+        if (!self.flightNew) {
+            if (opened == null) { return; }  // deleted here meanwhile: its deletion is on the list and trashes it there
+            StoreFile held = opened;
+            held.setAttribute("revision", sent.revision);
+            held.setAttribute("version", f"{sent.version}");
+            held.setAttribute("sha256", sent.sha256);
+            held.setAttribute("synced", self.flightBefore);
+            self.uploaded++;
+            return;
+        }
+        self.doubted.remove(path);
+        if (opened != null && opened.attribute("id").equals(sent.id)) { return; }  // the feed told of it first and it is written down already
+        if (opened == null || !opened.attribute("id").isEmpty()) {  // gone from here while it was on its way, or the Drive's own file of that name by now: what was sent is one too many there
+            if (self.api.trash(sent.id) == null) { Console.error(f"drive: {path} changed here while it was being sent, and the copy that arrived on the Drive could not be trashed"); }
+            return;
+        }
+        StoreFile held = opened;
+        self.store.adopt(full, sent, PathTools.basename(path));
+        held.setAttribute("synced", self.flightBefore);  // a write during the upload shows as a change next time
+        self.uploaded++;
+    }
+
+    // Begins sending a file, if none is on its way. False either way: the entry is looked at again.
+    private bool begin(string path, string id, string parent, string name, string content, StoreFile held) {
+        if (self.flight != null) { return false; }  // one at a time
+        string before = held.shape();
+        DriveSending? going = self.api.send(id, parent, name, content, held.modified());
+        if (going == null) {
+            if (id.isEmpty()) { self.doubted.put(path, true); }
+            return self.fails(f"uploading {path}");
+        }
+        self.flight = going;
+        self.flightPath = path;
+        self.flightBefore = before;
+        self.flightNew = id.isEmpty();
+        return false;
+    }
+
     // Bring the Drive in line with one entry. True when there is nothing more to do for it.
     private bool sync(string path) {
+        if (self.flight != null && self.flightPath.equals(path)) { return false; }  // on its way
         if (self.local(path)) { return true; }
         if (self.store.unavailable(path)) { return false; }  // on a volume that is not here: it waits
         string full = self.store.real(path);
@@ -333,11 +393,7 @@ class Uploader {
             if (self.driveFull()) { return false; }
             string before = held.shape();
             DriveFile? sent = self.arrived(path, parent, name, held, false);
-            if (sent == null) { sent = self.api.upload("", parent, name, full, held.modified()); }
-            if (sent == null) {
-                self.doubted.put(path, true);
-                return self.fails(f"uploading {path}");
-            }
+            if (sent == null) { return self.begin(path, "", parent, name, full, held); }
             self.doubted.remove(path);
             self.store.adopt(full, sent, local);
             held.setAttribute("synced", before);  // a write during the upload shows as a change next time
@@ -384,15 +440,7 @@ class Uploader {
             self.conflict(path, remote);
             return true;
         }
-        string before = held.shape();
-        DriveFile? sent = self.api.upload(id, "", "", self.store.contents(id), held.modified());
-        if (sent == null) { return self.fails(f"uploading {path}"); }
-        held.setAttribute("revision", sent.revision);
-        held.setAttribute("version", f"{sent.version}");
-        held.setAttribute("sha256", sent.sha256);
-        held.setAttribute("synced", before);
-        self.uploaded++;
-        return before.equals(held.shape());
+        return self.begin(path, id, "", "", self.store.contents(id), held);
     }
 
     // Trash on the Drive what was deleted here. True when there is nothing more to do for it.
@@ -423,6 +471,7 @@ class Uploader {
     // path once; what a slice leaves stays where it is, and the round ends with the last path.
     public void work() {
         self.unfinished = false;
+        self.land();
         if (self.waiting() == 0) { return; }
         long long until = MonotonicClock.milliseconds() + (long long)self.sliceMilliseconds;
         int worked = 0;
