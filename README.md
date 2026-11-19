@@ -101,7 +101,7 @@ Every test uses `drive-fake`. Nothing in this repository talks to a real Drive.
 |---|---|
 | `unit-planner`, `unit-remote` | the rule for each pair of local and remote states; the API client against the fake, with failures, expiry and paging, and nothing secret on a command line |
 | `vm-store`, `vm-door`, `vm-readers`, `vm-writes` | the store's facts on a real filesystem; the mount, also against an engine of another version; who may cause a download; uploads, conflicts and the delete brake |
-| `vm-pinning`, `vm-placement`, `vm-crashes`, `vm-convergence` | pinned folders, and a large one arriving without being held in memory; a folder on another volume; an engine killed mid-read and mid-upload, and what the status says before it listens; two clients ending with one tree |
+| `vm-pinning`, `vm-placement`, `vm-crashes`, `vm-convergence` | pinned folders, a large one arriving without being held in memory, and a start that does not look at each file; a folder on another volume; an engine killed mid-read and mid-upload, and what the status says before it listens; two clients ending with one tree |
 | `vm-held`, `vm-held-placed`, `vm-refusals` | held deletions across an engine restart and a reboot; yes and no inside a placed folder; a full disk, a full Drive, a withdrawn sign-in, an unreadable change, a forgotten feed position and a store in another format |
 | `vm-dialog`, `vm-tray`, `vm-module` | the window that asks; the tray icon and its window; the units `services.drive` generates |
 | `vm-mutations` | each safety rule cut out of the client in turn: the scenario that covers it must then fail |

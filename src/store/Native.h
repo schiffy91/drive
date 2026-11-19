@@ -1,5 +1,6 @@
 #pragma once
 
+#include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <linux/fs.h>
@@ -321,6 +322,43 @@ static inline DriveBufferHandle driveReadAllBytes(const char* path) {
 		handle->length += (size_t)got;
 	}
 	close(descriptor);
+	return handle;
+}
+
+// A directory's entries with their kinds, as the directory itself gives them: for each, one character (d
+// a folder, l a link, f anything else), the name and a zero byte. A filesystem that does not say the
+// kind is asked once for that entry. Null when the directory cannot be read.
+static inline DriveBufferHandle driveListKinds(const char* path) {
+	DIR* directory = opendir(path);
+	if (!directory) { return NULL; }
+	DriveBufferHandle handle = calloc(1, sizeof(*handle));
+	size_t capacity = 0;
+	struct dirent* entry;
+	while (handle && (entry = readdir(directory)) != NULL) {
+		const char* name = entry->d_name;
+		if (name[0] == '.' && (name[1] == 0 || (name[1] == '.' && name[2] == 0))) { continue; }
+		char kind = entry->d_type == DT_DIR ? 'd' : entry->d_type == DT_LNK ? 'l' : 'f';
+		if (entry->d_type == DT_UNKNOWN) {
+			struct stat found;
+			if (fstatat(dirfd(directory), name, &found, AT_SYMLINK_NOFOLLOW) == 0) { kind = S_ISDIR(found.st_mode) ? 'd' : S_ISLNK(found.st_mode) ? 'l' : 'f'; }
+		}
+		size_t need = strlen(name) + 2;
+		if (handle->length + need > capacity) {
+			capacity = (capacity + need) * 2;
+			unsigned char* grown = realloc(handle->bytes, capacity);
+			if (!grown) {
+				free(handle->bytes);
+				free(handle);
+				handle = NULL;
+				break;
+			}
+			handle->bytes = grown;
+		}
+		handle->bytes[handle->length] = (unsigned char)kind;
+		memcpy(handle->bytes + handle->length + 1, name, need - 1);
+		handle->length += need;
+	}
+	closedir(directory);
 	return handle;
 }
 

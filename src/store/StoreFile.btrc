@@ -1,5 +1,6 @@
 import Library.Bytes;
 import Library.Strings;
+import Library.Vector;
 
 // One file or folder of the store, open. Everything the client knows about an
 // entry is kept on the entry itself, as attributes and as which ranges hold data.
@@ -144,6 +145,24 @@ class StorePaths {  // the calls on paths the store needs
         if (buffer == null) { return Bytes(); }
         Bytes? out = driveBufferBytes(buffer);
         return out == null ? Bytes() : out;
+    }
+
+    // A directory's entries, each with its kind as the first character of its name: d a folder, l a link,
+    // f anything else. The kinds come with the listing, so a tree of hundreds of thousands of files is
+    // walked without a call per file.
+    class Vector<string> kinds(string path) {
+        Vector<string> entries = [];
+        DriveBufferHandle? buffer = driveListKinds(path);
+        if (buffer == null) { return entries; }
+        Bytes? listed = driveBufferBytes(buffer);
+        if (listed == null) { return entries; }
+        int start = 0;
+        for (int at = 0; at < listed.length(); at++) {
+            if (listed.get(at) != 0) { continue; }
+            entries.push(listed.slice(start, at).toString());
+            start = at + 1;
+        }
+        return entries;
     }
 
     class string formatLocalTime(long long seconds) {

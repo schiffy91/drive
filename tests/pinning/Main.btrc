@@ -170,6 +170,25 @@ class PinningScenario {
         Check.that(self.machine.fail(f"drive verify Adopt --mount {self.mount} --runtime {self.drive.runtime} 2>&1").contains("differs from the Drive: " + self.mount + "/Adopt/z.bin"), "and the check by contents names the file whose contents are not the Drive's");
     }
 
+    // Starting reads the tree's folders. It used to ask the kernel twice about every file as well, which on
+    // a store of 400,000 files was nine of the eleven seconds before the engine answered anything.
+    private void startsWithoutLookingAtEachFile() {
+        print("An engine that starts reads the folders and does not look at each file");
+        self.drive.stop("drive-engine");
+        self.machine.succeed(f"mkdir {self.drive.store}/tree/Loose/many && cd {self.drive.store}/tree/Loose/many && seq 1 3000 | xargs touch");  // files only: no folder of theirs is pinned
+        self.drive.startEngine(self.engine, "strace -f -c -o /tmp/start-calls -e trace=stat,lstat,newfstatat,statx");
+        try { self.drive.connected(); } catch (string error) {
+            print(self.machine.succeed("(journalctl -b --no-pager | grep -E 'drive-engine|strace|drive\\[' | tail -15; ls -la /run/drive-test /tmp/start-calls; command -v strace) 2>&1 || true"));
+            throw error;
+        }
+        self.machine.succeed("systemctl stop drive-engine.service; for turn in $(seq 50); do test -s /tmp/start-calls && break; sleep 0.1; done");
+        int looks = self.machine.succeed("awk '$NF ~ /stat/ { calls += $4 } END { print calls + 0 }' /tmp/start-calls").trim().toInt();
+        Check.that(looks > 0 && looks < 1500, f"with 3,000 files in one folder, starting took {looks} looks at files and folders");
+        self.machine.succeed(f"rm -r {self.drive.store}/tree/Loose/many");
+        self.drive.startEngine(self.engine);
+        self.drive.connected();
+    }
+
     public void check() {
         self.prepare();
         self.pinned();
@@ -177,6 +196,7 @@ class PinningScenario {
         self.givenBack();
         self.adopted();
         self.verified();
+        self.startsWithoutLookingAtEachFile();
     }
 }
 

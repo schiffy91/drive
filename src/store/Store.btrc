@@ -773,9 +773,9 @@ class Store {
     public string journal(string name) { return f"{self.root}/dirty/{name}"; }
 
     private void scanBelow(string path) {
-        for name in FileSystem.listDir(path) {
-            string child = f"{path}/{name}";
-            if (FileSystem.isSymlink(child) || !FileSystem.isDir(child)) { continue; }
+        for entry in StorePaths.kinds(path) {
+            if (!entry.startsWith("d")) { continue; }  // a folder, said by the listing: no look at each of the files
+            string child = f"{path}/{entry.substring(1, entry.len() - 1)}";
             int placed = self.volumes.holding(self.logical(child));
             if (placed >= 0 && child.equals(self.volumes.stand(placed))) { continue; }  // a stand-in: its folder is found on its volume
             StoreFile? held = StoreFile.open(child);

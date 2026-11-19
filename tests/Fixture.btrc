@@ -51,8 +51,8 @@ class DriveFixture {
         self.machine.waitUntil(f"curl -sS -X POST '{self.fake}/__control/log' >/dev/null");
     }
 
-    public void startEngine(string extra = "") {
-        self.machine.succeed(f"systemd-run --unit {self.unit}-engine --collect drive engine --store {self.store} --runtime {self.runtime} --credentials /var/lib/drive-test/credentials.json --api {self.fake} --chunk 65536 --follow 1 {extra}");
+    public void startEngine(string extra = "", string under = "") {  // `under`: a program to run the engine under, as strace is; it is given the engine by its full path
+        self.machine.succeed(f"systemd-run --unit {self.unit}-engine --collect {under} {under.isEmpty() ? "drive" : "/run/current-system/sw/bin/drive"} engine --store {self.store} --runtime {self.runtime} --credentials /var/lib/drive-test/credentials.json --api {self.fake} --chunk 65536 --follow 1 {extra}");
         self.machine.waitUntil(f"test -s {self.store}/position && test -S {self.runtime}/engine.sock");
     }
 

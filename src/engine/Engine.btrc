@@ -244,10 +244,10 @@ class Engine {
     }
 
     private void want(string folder) {
-        for name in FileSystem.listDir(folder) {
-            string child = f"{folder}/{name}";
-            if (FileSystem.isSymlink(child)) { continue; }
-            if (FileSystem.isDir(child)) {
+        for entry in StorePaths.kinds(folder) {
+            string child = f"{folder}/{entry.substring(1, entry.len() - 1)}";
+            if (entry.startsWith("l")) { continue; }
+            if (entry.startsWith("d")) {
                 self.want(child);
                 continue;
             }
@@ -607,11 +607,15 @@ class Engine {
         // Two engines on one store would each send what the other already sent.
         if (!StorePaths.lock(self.store.temporary("../engine.lock"))) { throw "Another engine is already working on this store"; }
         Path.writeAll(self.socket.replace("door.sock", "progress"), f"engine {Platform.pid()}\nstarting yes\n");  // the scan takes a while on a slow disk
+        long long began = MonotonicClock.milliseconds();
         self.store.scan();
+        long long scanned = MonotonicClock.milliseconds();
         self.loadPins();
         self.wantAll();
+        long long listed = MonotonicClock.milliseconds();
         Channel? control = Channel.listen(self.socket.replace("door.sock", "engine.sock"));
         if (control == null) { throw "Cannot listen for commands"; }
+        Console.error(f"drive: ready for commands after {listed - began} ms: {scanned - began} ms reading {self.store.folderCount()} folders and counting the files, {listed - scanned} ms listing what the pinned folders lack ({self.wanted.len} files)");
         Channel listener = control;
         Channel? door = null;
         while (true) {

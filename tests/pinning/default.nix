@@ -11,7 +11,7 @@ in (import ../lib/vm-test.nix { inherit pkgs inputs; }) {
   name = "drive-pinning";
   nodes.machine = { ... }: {
     boot.kernelModules = [ "fuse" ];
-    environment.systemPackages = [ drive programs.fake ask pkgs.curl pkgs.attr pkgs.python3 ];
+    environment.systemPackages = [ drive programs.fake ask pkgs.curl pkgs.attr pkgs.python3 pkgs.strace ];
     virtualisation.memorySize = 2048;
   };
   scenario = ./Main.btrc;
