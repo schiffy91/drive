@@ -270,7 +270,7 @@ class DriveApi {
         for (int attempt = 0; attempt < self.attempts; attempt++) {
             TransportResponse? response = self.exchange(1, "GET", f"{self.files()}/{HTTPUrl.encode(id)}?alt=media", [f"Range: bytes={first}-{last}"], "", path);
             if (response == null) { return false; }
-            if ((long long)FileSystem.readBytes(path).length() == last - first + 1LL) { return true; }  // a cut-off transfer still answers 206
+            if (FileSystem.stat(path).size == last - first + 1LL) { return true; }  // a cut-off transfer still answers 206
             self.fail(DRIVE_NETWORK, response.status, "the transfer ended early");
         }
         return false;

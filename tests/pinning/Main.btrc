@@ -57,6 +57,13 @@ class PinningScenario {
         self.machine.waitUntil(f"cmp -s {self.drive.store}/tree/Pinned/p4.bin {self.drive.source}/p4 && cmp -s {self.drive.store}/tree/Pinned/p1.bin {self.drive.source}/p1-next");
         Check.equal(self.drive.state("Pinned/p4.bin") + self.drive.state("Pinned/p1.bin"), "locallocal", "both are complete");
 
+        print("A large pinned file arrives without the engine holding a piece of it in memory");
+        self.random("large", 50331648);  // a piece is 32 MiB: one whole piece and a half
+        self.drive.put(self.drive.id("Pinned"), "large.bin", "large");
+        self.machine.waitUntil(f"cmp -s {self.drive.store}/tree/Pinned/large.bin {self.drive.source}/large", 240);
+        int highest = self.machine.succeed("grep VmHWM /proc/$(systemctl show -p MainPID --value drive-engine.service)/status | tr -dc 0-9").trim().toInt();
+        Check.that(highest > 0 && highest < 24576, f"the engine's memory stayed far below one piece: {highest} kB at its highest");
+
         print("A folder pinned by hand stays pinned across a restart");
         self.drive.drive(f"pin {self.mount}/Adopt/Sub --mount {self.mount}");
         self.machine.waitUntil(f"test \"$(getfattr --absolute-names -n user.drive.state --only-values {self.drive.store}/tree/Adopt/Sub/y.bin)\" = local");

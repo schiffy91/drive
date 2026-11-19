@@ -86,6 +86,13 @@ let
       at = "A store in a format this client does not know";
       sees = "FAIL: machine: expected failure, exit";
     }
+    {
+      rule = "a piece that arrived is measured where it lies, not read into memory";
+      scenario = ../pinning;
+      mutation = cut "remote/DriveApi.btrc" "FileSystem.stat(path).size == last - first + 1LL" "(long long)FileSystem.readBytes(path).length() == last - first + 1LL";
+      at = "A large pinned file arrives without the engine holding a piece of it in memory";
+      sees = "FAIL: the engine's memory stayed far below one piece";
+    }
   ];
   failed = mutant: pkgs.testers.testBuildFailure (import mutant.scenario { inherit inputs system; inherit (mutant) mutation; });
 in pkgs.runCommand "drive-mutations" { passthru.runs = map failed mutants; } (''

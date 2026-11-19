@@ -193,7 +193,7 @@ class Engine {
         Vector<bool> arrived = self.api.downloadWhole(ids, parts);
         int came = 0;
         for (int index = 0; index < ids.len; index++) {
-            if (arrived.get(index) && (long long)FileSystem.readBytes(parts.get(index)).length() == sizes.get(index)) { came++; }
+            if (arrived.get(index) && FileSystem.stat(parts.get(index)).size == sizes.get(index)) { came++; }
             else { arrived.set(index, false); }
         }
         if (came == 0) {
