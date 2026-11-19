@@ -81,6 +81,18 @@ class CrashScenario {
         Check.that(self.machine.fail(told.replace("{0}", "online").replace("{1}", "$$")).contains("The engine is not running"), "nor is one that stopped listening after it had started");
     }
 
+    private void beforeTheNetwork() {
+        print("An engine that starts before the Drive can be reached asks again within seconds, not after a whole interval");
+        string closed = "OUTPUT -p tcp -d 127.0.0.1 --dport 18475 -j REJECT --reject-with tcp-reset";  // the fake Drive's port answers nobody
+        self.drive.stop("drive-engine");
+        self.machine.succeed(f"iptables -I {closed} && ! curl -sS -m 2 {self.drive.fake}/ 2>/dev/null");
+        self.drive.startEngine(self.engine);  // as at boot, where the engine no longer waits for the network
+        self.machine.waitUntil(f"drive status --runtime {self.drive.runtime} | grep -q '^offline'", 30);
+        self.machine.succeed(f"sleep 6; iptables -D {closed}");
+        self.machine.waitUntil(f"drive status --runtime {self.drive.runtime} | grep -q '^online'", 10);  // a whole interval is thirty seconds
+        self.drive.connected();
+    }
+
     private void cutOff() {
         print("An upload cut off part-way goes on from the byte the Drive has, also after the engine was killed in between");
         self.machine.succeed(f"head -c 3000000 /dev/urandom > {self.drive.source}/long");
@@ -106,6 +118,7 @@ class CrashScenario {
         self.early();
         self.duringFetch();
         self.duringUpload();
+        self.beforeTheNetwork();
         self.cutOff();
         self.whilePlaying();
     }

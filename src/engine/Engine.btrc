@@ -639,7 +639,13 @@ class Engine {
             // sending has been written down here, and it would be taken for a stranger of the same name.
             if (MonotonicClock.milliseconds() >= self.due && !self.uploader.sending()) {
                 self.current();
-                self.due = self.behind ? 0LL : MonotonicClock.milliseconds() + (long long)self.followSeconds * 1000LL;
+                // A Drive that cannot be reached is asked again soon: the engine starts with the machine, before its
+                // network is up, and must not sit out a whole interval before its first word with the Drive.
+                // Only when there was no answer at all: a Drive that answered with a refusal is not asked the more often for it.
+                DriveError? failure = self.api.failure;
+                bool unreachable = !self.online && failure != null && failure.kind == DRIVE_NETWORK;
+                long long pause = unreachable && self.followSeconds > 5 ? 5000LL : (long long)self.followSeconds * 1000LL;
+                self.due = self.behind ? 0LL : MonotonicClock.milliseconds() + pause;
             }
             long long wait = self.due - MonotonicClock.milliseconds();
             bool busy = self.online && !self.paused && self.wanted.len > 0 && MonotonicClock.milliseconds() >= self.roomDue;  // pinned files to fetch: only look, do not wait

@@ -90,8 +90,10 @@ in {
     # an update it does: door and engine greet each other with the version they speak and refuse a mismatch.
     systemd.services.drive-engine = service "Drive: sync with Google Drive" {
       stopIfChanged = false;  # restarted at the end of a switch, not stopped for the length of it
-      after = [ "network-online.target" "drive-door.service" ];
-      wants = [ "network-online.target" "drive-door.service" ];
+      # It does not wait for the network: a boot would wait with it (NetworkManager-wait-online, 7.6 s on
+      # the desktop). It starts offline and asks the Drive again every five seconds until it answers.
+      after = [ "drive-door.service" ];
+      wants = [ "drive-door.service" ];
       unitConfig.ConditionPathExists = credentials; # nothing to do until `drive auth`
       environment.DRIVE_RUNTIME = runtime; # for the window that asks about a program
       serviceConfig = {
@@ -116,8 +118,7 @@ in {
     };
 
     systemd.services.drive-push = lib.mkIf cfg.push (service "Drive: wait for the Drive to announce changes" {
-      after = [ "network-online.target" "drive-engine.service" ];
-      wants = [ "network-online.target" ];
+      after = [ "drive-engine.service" ];  # nor does this one wait for the network: it tries again every three seconds
       unitConfig.ConditionPathExists = credentials;
       serviceConfig = {
         ExecStart = "${drive} push listen --quiet --runtime ${runtime} --credentials ${lib.escapeShellArg credentials} --machine ${lib.escapeShellArg config.networking.hostName}";
