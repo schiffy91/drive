@@ -6,7 +6,7 @@ let
   src = entry: pkgs.lib.fileset.toSource { root = ../src; fileset = sources ../src entry; };
   window = {  # what a program with a window of its own links and runs with
     linkPlan = true;
-    buildInputs = [ pkgs.sdl3 pkgs.fontconfig pkgs.freetype inputs.btrc.packages.${pkgs.stdenv.hostPlatform.system}.wgpu-native ];
+    buildInputs = [ pkgs.gtk4 pkgs.wayland pkgs.libx11 inputs.btrc.packages.${pkgs.stdenv.hostPlatform.system}.wgpu-native ];  # the windows and controls are GTK's
     wrapperArgs = [ "--prefix" "LD_LIBRARY_PATH" ":" "${pkgs.vulkan-loader}/lib" ];  # the window draws through Vulkan, whose loader is opened by name; not every system keeps it with its drivers
   };
   ask = build ({  # the window that asks whether a program may download
@@ -38,7 +38,6 @@ let
   } // window // {
     wrapperArgs = window.wrapperArgs ++ [
       "--prefix" "PATH" ":" (pkgs.lib.makeBinPath [ drive pkgs.util-linux pkgs.gnugrep pkgs.xdg-utils ])  # its buttons run `drive`, and open the folder
-      "--set" "SDL_APP_ID" "drive-status"  # the name the desktop looks the window's icon up by
     ];
   });
   statusEntry = pkgs.makeDesktopItem {  # not a launcher: it gives the window its name and the Drive's mark
