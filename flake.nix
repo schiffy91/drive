@@ -30,6 +30,7 @@
       # Longer forms of checks, for a run that is not waited on: `nix build .#nightly.x86_64-linux.convergence-seeds`.
       nightly = each (system: {
         convergence-seeds = import ./tests/convergence { inherit inputs system; seeds = [ "20261113" "7" "424242" ]; };
+        profile-sync = import ./tests/profile { inherit inputs system; };  # a measurement: where a sync's processor time goes
       });
 
       devShells = each (system: {

@@ -1,0 +1,99 @@
+import Library.CLI;
+import Library.FileSystem;
+import Library.JSON;
+import testkit.Lab;
+import ../Fixture.btrc;
+
+// Not a check: a measurement. The engine downloads a pinned tree and sends what is written through the
+// mount, against the fake Drive, while `perf` samples it and the children it starts. What comes out says
+// where a sync's processor time goes (the engine's own code, the runtime under it, the `curl` it starts
+// for each request, the kernel), which is what decides whether reference counting, strings or the
+// transport are worth work. The report, the counts and the times are kept with the run.
+class ProfileScenario {
+    private DriveFixture drive;
+    private Guest machine;
+    private int files;
+    private int writes;
+    private string samples = "/var/tmp/engine.perf";
+
+    public ProfileScenario(Guest machine, JSONValue settings) {
+        self.machine = machine;
+        self.drive = DriveFixture(machine);
+        self.files = settings.get("files").asInt();
+        self.writes = settings.get("writes").asInt();
+    }
+
+    private void fill() {
+        print(f"The Drive gets {self.files} files of 4 kB in folders of fifty");
+        self.drive.prepare();
+        self.machine.succeed(f"head -c 4096 /dev/urandom > {self.drive.source}/small");
+        self.drive.startFake();
+        string pinned = self.drive.folder("root", "Pinned");
+        int folders = (self.files + 49) / 50;
+        for (int folder = 0; folder < folders; folder++) {
+            string id = self.drive.folder(pinned, f"folder-{folder}").trim();
+            int count = folder == folders - 1 ? self.files - folder * 50 : 50;
+            self.machine.succeed(f"for n in $(seq 1 {count}); do curl -sS -H Expect: -X POST '{self.drive.fake}/__control/put?parent={id}&name=file-'$n --data-binary @{self.drive.source}/small -o /dev/null || exit 1; done", 300);
+        }
+        self.drive.control("log?clear=1");
+    }
+
+    private string seconds() { return self.machine.succeed("date +%s.%N").trim(); }
+
+    private string between(string from, string to) { return self.machine.succeed(f"awk 'BEGIN {{ printf \"%.1f\", {to} - {from} }}'").trim(); }
+
+    private JSONValue sync() {
+        var result = JSONValue.makeObject();
+        print("The engine starts under perf and downloads the pinned tree");
+        string started = self.seconds();
+        self.drive.startEngine("--quiet 1 --pin Pinned", f"perf record -e cpu-clock -F 499 -o {self.samples} --");
+        self.drive.startDoor();
+        self.machine.waitUntil(f"drive status --runtime {self.drive.runtime} | grep -q ' 0 to download' && test \"$(find {self.drive.store}/tree/Pinned -type f | wc -l)\" = {self.files}", 900);
+        string downloaded = self.seconds();
+        result.set("downloadSeconds", JSONValue.makeString(self.between(started, downloaded)));
+        result.set("downloadRequests", JSONValue.makeString(self.machine.succeed(f"curl -sS -X POST '{self.drive.fake}/__control/log?clear=1' | wc -l").trim()));
+
+        print(f"{self.writes} files are written through the mount and sent");
+        self.machine.succeed(f"mkdir {self.drive.mount}/Pinned/written && for n in $(seq 1 {self.writes}); do cp {self.drive.source}/small {self.drive.mount}/Pinned/written/new-$n || exit 1; done", 600);
+        self.machine.waitUntil(f"drive status --runtime {self.drive.runtime} | grep -q ' 0 changes to send' && test -n \"$(getfattr --absolute-names -n user.drive.id --only-values {self.drive.store}/tree/Pinned/written/new-{self.writes} 2>/dev/null)\"", 900);
+        result.set("uploadSeconds", JSONValue.makeString(self.between(downloaded, self.seconds())));
+        result.set("uploadRequests", JSONValue.makeString(self.machine.succeed(f"curl -sS -X POST '{self.drive.fake}/__control/log?clear=1' | wc -l").trim()));
+
+        print("The engine is asked to stop, so that perf writes what it sampled");
+        result.set("engineCpuSeconds", JSONValue.makeString(self.machine.succeed("awk '{ printf \"%.1f\", $1 / 1e9 }' <<< \"$(systemctl show -p CPUUsageNSec --value drive-engine.service)\"").trim()));
+        self.machine.succeed("systemctl kill --signal=INT drive-engine.service");
+        self.machine.waitUntil("! systemctl is-active --quiet drive-engine.service", 120);
+        return result;
+    }
+
+    // perf's own tables: by program, by library, and the fifty symbols with the most samples.
+    public string report(string sort, int lines) {
+        return self.machine.succeed(f"perf report -i {self.samples} --stdio --no-children --sort {sort} 2>/dev/null | grep -v '^$' | sed -n '1,{lines}p'", 300);
+    }
+
+    public JSONValue measure() {
+        self.fill();
+        return self.sync();
+    }
+}
+
+int main(int argc, char** argv) {
+    try {
+        var lab = Lab(CLIArgs(argc, argv).require(0, "Supply VM descriptor"));
+        var scenario = ProfileScenario(lab.guest("machine"), lab.settings());
+        lab.startAll();
+        var measured = scenario.measure();
+        FileSystem.writeText(lab.artifact("sync.json"), measured.stringifyPretty() + "\n");
+        FileSystem.writeText(lab.artifact("by-program.txt"), scenario.report("comm", 40));
+        FileSystem.writeText(lab.artifact("by-library.txt"), scenario.report("comm,dso", 60));
+        FileSystem.writeText(lab.artifact("by-symbol.txt"), scenario.report("comm,dso,symbol", 120));
+        print(measured.stringifyPretty());
+        print(scenario.report("comm,dso", 30));
+        lab.close();
+        print("DONE: a sync against the fake Drive was profiled");
+        return 0;
+    } catch (string error) {
+        print(f"FAIL: {error}");
+        return 1;
+    }
+}

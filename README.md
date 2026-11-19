@@ -93,6 +93,7 @@ The client deletes nothing on a guess, and says what it did not understand:
 ci/checks.sh unit     # two programs built and run: the planner's rules, the Drive API client
 ci/checks.sh vm       # fifteen VM scenarios against the fake Drive; needs KVM
 nix build .#nightly.x86_64-linux.convergence-seeds   # the convergence scenario over three seeds
+nix build .#nightly.x86_64-linux.profile-sync        # a measurement, not a check: a sync under perf; result/by-library.txt says where the time went
 ```
 
 Every test uses `drive-fake`. Nothing in this repository talks to a real Drive.
