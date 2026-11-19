@@ -73,8 +73,17 @@ class CrashScenario {
         Check.equal(self.count("save.dat"), "1", "the last save is on the Drive, still as one file");
     }
 
+    private void early() {
+        print("Before the engine listens the status says it is starting, and with no engine it says that");
+        string told = "mkdir -p /run/drive-early && printf 'engine %s\\n{0} yes\\n' {1} > /run/drive-early/progress && drive status --runtime /run/drive-early 2>&1";  // what an engine writes, in the name of a process; asked while this shell lives
+        Check.equal(self.machine.succeed(told.replace("{0}", "starting").replace("{1}", "$$")).trim(), "starting: reading what is already on this machine", "an engine still reading its store is not called gone");
+        Check.that(self.machine.fail(told.replace("{0}", "starting").replace("{1}", "$(sh -c 'echo $$')")).contains("The engine is not running"), "an engine that died while starting is not taken for one that starts");
+        Check.that(self.machine.fail(told.replace("{0}", "online").replace("{1}", "$$")).contains("The engine is not running"), "nor is one that stopped listening after it had started");
+    }
+
     public void check() {
         self.prepare();
+        self.early();
         self.duringFetch();
         self.duringUpload();
         self.whilePlaying();

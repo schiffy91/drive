@@ -254,7 +254,16 @@ class Drive {
     // The engine answers between transfers. In the middle of one long transfer it says nothing, and what it last
     // wrote down is said for it, in the same words.
     class void status(CLICommandLine options) {
-        string answer = Drive.asked(options, "status", 3);
+        Channel? engine = Channel.connect(Drive.runtime(options) + "/engine.sock");
+        if (engine == null) {  // not listening yet, or not there
+            DriveProgress early = DriveProgress.read(Drive.runtime(options));
+            if (!early.running || !early.starting) { throw "The engine is not running"; }
+            Console.log("starting: reading what is already on this machine");
+            return;
+        }
+        if (!engine.send("status")) { throw "The engine is not running"; }  // on the connection just made: a second one would cost the engine a turn
+        Channel.wait(engine.handle(), -1, -1, 3000);
+        string answer = engine.receive().trim();
         if (!answer.isEmpty()) {
             Console.log(answer);
             return;

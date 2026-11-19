@@ -87,6 +87,13 @@ let
       sees = "FAIL: machine: expected failure, exit";
     }
     {
+      rule = "an engine still reading its store is said to be starting";
+      scenario = ../crashes;
+      mutation = cut "Main.btrc" "if (!early.running || !early.starting) {" "if (true) {";
+      at = "Before the engine listens the status says it is starting, and with no engine it says that";
+      sees = "FAIL: machine: mkdir -p /run/drive-early";
+    }
+    {
       rule = "a piece that arrived is measured where it lies, not read into memory";
       scenario = ../pinning;
       mutation = cut "remote/DriveApi.btrc" "FileSystem.stat(path).size == last - first + 1LL" "(long long)FileSystem.readBytes(path).length() == last - first + 1LL";
