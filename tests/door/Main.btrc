@@ -145,6 +145,23 @@ class DoorScenario {
         Check.equal(self.machine.succeed(far), real, "with the guard back the same read waits for the engine and returns the file's real bytes");
     }
 
+    // After an update the mount stays up and a new engine starts behind it. If the two no longer speak the same
+    // version, neither guesses what the other means.
+    private void otherVersion() {
+        print("A mount left from another version of the client");
+        string near = f"dd if={self.mount}/Media/third.bin bs=1 skip=100000 count=16 status=none";
+        self.stop("drive-door");
+        self.startDoor("--speaks 2");
+        self.machine.waitUntil("drive status --runtime /run/drive-test | grep -q 'door of another version'");
+        self.machine.succeed(f"cmp {self.mount}/Media/big.bin {self.source}/big.bin");
+        Check.that(self.machine.fail(near + " 2>&1").contains("No route to host"), "what is downloaded reads as before, and what is not refuses to open");
+        Check.equal(self.machine.succeed("journalctl -u drive-door.service --no-pager | grep -c 'the engine speaks version 1 and this mount version 2'").trim(), "1", "the mount says once which versions met");
+        self.stop("drive-door");
+        self.startDoor();
+        self.machine.waitUntil("drive status --runtime /run/drive-test | grep -q 'door connected'");
+        Check.equal(self.machine.succeed(near + " | od -An -tx1 | tr -d ' \\n'"), self.machine.succeed(f"dd if={self.source}/third.bin bs=1 skip=100000 count=16 status=none | od -An -tx1 | tr -d ' \\n'"), "with a mount of the engine's version the same read returns the file's bytes");
+    }
+
     public void check() {
         self.prepare();
         self.ranges();
@@ -152,6 +169,7 @@ class DoorScenario {
         self.engineGone();
         self.doorGone();
         self.unguarded();
+        self.otherVersion();
         self.offline();
     }
 }

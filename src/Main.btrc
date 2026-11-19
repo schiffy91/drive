@@ -114,6 +114,7 @@ class Drive {
         Door door = Door(store, Drive.runtime(options) + "/door.sock");
         door.readOnly = options.has("--read-only");
         door.unguarded = options.has("--unguarded");
+        door.speaks = options.option("--speaks", f"{door.speaks}").toInt();
         for declared in options.values("--place") {
             if (!door.volumes.place(declared)) { throw f"--place wants PATH=LOCATION, not {declared}"; }
         }
@@ -151,6 +152,7 @@ class Drive {
         engine.chunk = options.option("--chunk", "4194304").toLong();
         engine.followSeconds = options.option("--follow", "30").toInt();
         if (engine.chunk < 4096LL || engine.chunk % 4096LL != 0LL) { throw "--chunk must be a multiple of 4096"; }
+        engine.speaks = options.option("--speaks", f"{engine.speaks}").toInt();
         engine.readers.budgetFiles = options.option("--budget-files", "20").toInt();
         engine.readers.budgetBytes = options.option("--budget-bytes", "268435456").toLong();
         for path in options.values("--deny-file") { engine.readers.deny(path); }

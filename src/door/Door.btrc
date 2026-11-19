@@ -72,6 +72,9 @@ class Door implements IUserspaceFileSystem, IUserspaceWriter, IUserspaceLinker, 
     private string store;
     private string tree;
     public bool readOnly = false;
+    public int speaks = Channel.protocol();  // other than the engine's only in the test of what a mismatch does
+    private int engineSpeaks = Channel.silent();
+    private bool strangerSaid = false;
     public bool unguarded = false;  // hand a not-downloaded file to the kernel as if it were whole. Only for the test that shows what that does: zeros.
     public Volumes volumes;  // the folders kept on other volumes
     private Vector<int> showing = [];  // for each: 1 shown, 0 unavailable, -1 not looked at yet
@@ -140,7 +143,7 @@ class Door implements IUserspaceFileSystem, IUserspaceWriter, IUserspaceLinker, 
         }
         // An open can refuse with the exact reason; a read that fails later can only say "I/O error". So ask first.
         // An open for writing needs the whole file here before a byte of it changes.
-        Channel? engine = self.engine;
+        Channel? engine = self.asked();
         self.ticket++;
         string request = writing ? f"fetch {self.ticket} {probe.attribute("id")} 0 {probe.size()} {reply.caller().process}" : f"open {self.ticket} {probe.attribute("id")} {reply.caller().process}";
         if (engine == null || !engine.send(request)) {
@@ -203,7 +206,7 @@ class Door implements IUserspaceFileSystem, IUserspaceWriter, IUserspaceLinker, 
             reply.data(open.file.read((long long)offset, (int)length));
             return;
         }
-        Channel? engine = self.engine;
+        Channel? engine = self.asked();
         self.ticket++;
         if (engine == null || !engine.send(f"fetch {self.ticket} {open.id} {offset} {length} {reply.caller().process}")) {
             reply.fail(UserspaceError.unavailable());  // nobody to fetch it
@@ -363,6 +366,15 @@ class Door implements IUserspaceFileSystem, IUserspaceWriter, IUserspaceLinker, 
         }
     }
 
+    // The engine to ask, or none: also when it is of a version this door does not speak, which after an update
+    // is the engine that was started behind a door that stayed up.
+    private Channel? asked() {
+        if (self.engine == null || self.engineSpeaks == self.speaks) { return self.engine; }
+        if (!self.strangerSaid) { Console.error(f"drive: the engine speaks version {self.engineSpeaks} and this mount version {self.speaks}; files that are not downloaded cannot be opened until drive-door is restarted"); }
+        self.strangerSaid = true;
+        return null;
+    }
+
     private void abandon() {  // the engine is gone: nothing it was fetching will arrive
         for wait in self.waits.values() { wait.reply.fail(UserspaceError.unavailable()); }
         self.waits.clear();
@@ -376,6 +388,7 @@ class Door implements IUserspaceFileSystem, IUserspaceWriter, IUserspaceLinker, 
         while (engine != null && engine.isOpen()) {
             string message = engine.receive();
             if (message.isEmpty()) { break; }
+            if (Channel.greeted(message) > 0) { self.engineSpeaks = Channel.greeted(message); }
             Vector<string> words = Strings.split(message, " ");
             if (words.len == 3 && words.get(0).equals("done") && self.knocks.has(words.get(1).toLong())) { self.admitted(words.get(1).toLong(), words.get(2)); }
             else if (words.len == 3 && words.get(0).equals("done")) { self.finished(words.get(1).toLong(), words.get(2)); }
@@ -414,6 +427,9 @@ class Door implements IUserspaceFileSystem, IUserspaceWriter, IUserspaceLinker, 
                 if (arrived != null) {
                     self.abandon();  // a new engine replaces one that went quiet
                     self.engine = arrived;
+                    self.engineSpeaks = Channel.silent();
+                    self.strangerSaid = false;
+                    arrived.send(f"hello {self.speaks}");  // before anything is asked of it
                 }
             }
             if ((ready & 4) != 0) { self.hear(); }

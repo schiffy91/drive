@@ -38,6 +38,9 @@ class Engine {
     private string socket;
     public long long chunk = 4194304LL;  // fetch at least this much around a read; a multiple of 4096
     public int followSeconds = 30;
+    public int speaks = Channel.protocol();  // other than the door's only in the test of what a mismatch does
+    private int doorSpeaks = Channel.silent();
+    private bool strangerSaid = false;
     private bool online = true;  // whether the Drive answered last time
     private long long due = 0LL;  // when the change feed is read next
     public Readers readers;
@@ -375,9 +378,16 @@ class Engine {
     private void refuse(Channel door, Vector<string> words) { door.send(f"{words.get(0).equals("open") ? "opened" : "done"} {words.get(1)} denied"); }
 
     private void answer(Channel door, string message) {
+        if (Channel.greeted(message) > 0) { self.doorSpeaks = Channel.greeted(message); }
         Vector<string> words = Strings.split(message, " ");
         bool opening = words.len == 4 && words.get(0).equals("open");
         if (!opening && !(words.len == 6 && words.get(0).equals("fetch"))) { return; }
+        if (self.doorSpeaks != self.speaks) {  // a mount from another version: its requests may not mean what they say
+            if (!self.strangerSaid) { Console.error(f"drive: the mount speaks version {self.doorSpeaks} and this engine version {self.speaks}; files that are not downloaded cannot be opened until drive-door is restarted"); }
+            self.strangerSaid = true;
+            door.send(f"{opening ? "opened" : "done"} {words.get(1)} error");
+            return;
+        }
         Reader who = self.readers.identify(words.get(opening ? 3 : 5).toInt());
         string verdict = self.readers.verdict(who, words.get(2), opening ? 0LL : words.get(4).toLong());
         if (verdict.equals("ok")) {
@@ -515,17 +525,19 @@ class Engine {
         if (words.len == 1 && words.get(0).equals("progress")) { return self.progress(door != null && door.isOpen()); }
         if (words.len == 1 && words.get(0).equals("status")) {
             Vector<string> missing = self.store.missing();
-            return f"{self.online ? "online" : self.refused() ? "sign-in refused" : "offline"}, door {door != null && door.isOpen() ? "connected" : "absent"}, {self.store.folderCount()} folders, {self.held.len} waiting, {self.uploader.waiting()} changes to send{self.uploader.driveFull() ? " (the Drive is full)" : ""}{self.behind ? " (catching up with the Drive)" : ""}, {self.wanted.len} to download{self.paused ? " (paused)" : ""}{self.cramped && self.wanted.len > 0 ? " (no room on the disk)" : ""}{self.uploader.braked || self.mirror.braked ? ", deletions held" : ""}{missing.len > 0 ? ", waiting for the volume of " + Strings.join(missing, ", ") : ""}\n";
+            return f"{self.online ? "online" : self.refused() ? "sign-in refused" : "offline"}, door {self.doorSays(door != null && door.isOpen())}, {self.store.folderCount()} folders, {self.held.len} waiting, {self.uploader.waiting()} changes to send{self.uploader.driveFull() ? " (the Drive is full)" : ""}{self.behind ? " (catching up with the Drive)" : ""}, {self.wanted.len} to download{self.paused ? " (paused)" : ""}{self.cramped && self.wanted.len > 0 ? " (no room on the disk)" : ""}{self.uploader.braked || self.mirror.braked ? ", deletions held" : ""}{missing.len > 0 ? ", waiting for the volume of " + Strings.join(missing, ", ") : ""}\n";
         }
         return "unknown command\n";
     }
+
+    private string doorSays(bool open) { return !open ? "absent" : self.doorSpeaks == self.speaks ? "connected" : "of another version"; }
 
     // What `status` says, one fact to a line, for the tray and the status window to read.
     private string progress(bool door) {
         Vector<string> lines = [];
         lines.push(f"engine {Platform.pid()}");
         lines.push(f"online {self.online ? "yes" : "no"}");
-        lines.push(f"door {door ? "connected" : "absent"}");
+        lines.push(f"door {self.doorSays(door)}");
         lines.push(f"paused {self.paused ? "yes" : "no"}");
         lines.push(f"behind {self.behind ? "yes" : "no"}");
         lines.push(f"folders {self.store.folderCount()}");
@@ -603,7 +615,12 @@ class Engine {
         Channel listener = control;
         Channel? door = null;
         while (true) {
-            if (door == null || !door.isOpen()) { door = Channel.connect(self.socket); }
+            if (door == null || !door.isOpen()) {
+                door = Channel.connect(self.socket);
+                self.doorSpeaks = Channel.silent();
+                self.strangerSaid = false;
+                if (door != null) { door.send(f"hello {self.speaks}"); }
+            }
             if (self.store.attend()) {  // a volume came or went
                 self.wantAll();
                 self.due = 0LL;

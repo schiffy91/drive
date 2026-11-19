@@ -1,10 +1,20 @@
 import Library.Strings;
+import Library.Vector;
 
 // One end of the socket between the door and the engine. Messages are single lines of words.
 class Channel {
     private int descriptor = -1;
 
     private Channel(int descriptor) { self.descriptor = descriptor; }
+
+    class int protocol() { return 1; }  // raised when a message changes its meaning
+
+    class int silent() { return 1; }  // what a side speaks that never says: one from before the greeting
+
+    class int greeted(string message) {  // the version in "hello N"; 0: not a greeting
+        Vector<string> words = Strings.split(message, " ");
+        return words.len == 2 && words.get(0).equals("hello") && words.get(1).toInt() > 0 ? words.get(1).toInt() : 0;
+    }
 
     class Channel? listen(string path) {
         int descriptor = driveChannelListen(path);

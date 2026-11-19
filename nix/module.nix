@@ -76,6 +76,7 @@ in {
     # The door: the mount itself. Small, no network. It needs the one capability that
     # mounting and handing opened files to the kernel take, and nothing else.
     systemd.services.drive-door = service "Drive: the mount at ${cfg.mountPoint}" {
+      restartIfChanged = false;  # a switch would close every file open under the mount; a new door comes with the next boot
       serviceConfig = {
         ExecStartPre = [ "+${prepare}" "${pkgs.coreutils}/bin/mkdir -p ${lib.escapeShellArg cfg.mountPoint}" ];
         ExecStart = "${drive} door --store ${lib.escapeShellArg cfg.store} --mount ${lib.escapeShellArg cfg.mountPoint} --runtime ${runtime} ${places}";
@@ -85,8 +86,10 @@ in {
       };
     };
 
-    # The engine: everything that talks to Google. It may stop and start without the mount going away.
+    # The engine: everything that talks to Google. It may stop and start without the mount going away, and after
+    # an update it does: door and engine greet each other with the version they speak and refuse a mismatch.
     systemd.services.drive-engine = service "Drive: sync with Google Drive" {
+      stopIfChanged = false;  # restarted at the end of a switch, not stopped for the length of it
       after = [ "network-online.target" "drive-door.service" ];
       wants = [ "network-online.target" "drive-door.service" ];
       unitConfig.ConditionPathExists = credentials; # nothing to do until `drive auth`

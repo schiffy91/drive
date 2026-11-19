@@ -100,6 +100,13 @@ let
       at = "A large pinned file arrives without the engine holding a piece of it in memory";
       sees = "FAIL: the engine's memory stayed far below one piece";
     }
+    {
+      rule = "a mount and an engine of different versions ask nothing of each other";
+      scenario = ../door;
+      mutation = cut "door/Door.btrc" "if (self.engine == null || self.engineSpeaks == self.speaks) { return self.engine; }" "if (true) { return self.engine; }";
+      at = "A mount left from another version of the client";
+      sees = "FAIL: what is downloaded reads as before, and what is not refuses to open";
+    }
   ];
   failed = mutant: pkgs.testers.testBuildFailure (import mutant.scenario { inherit inputs system; inherit (mutant) mutation; });
 in pkgs.runCommand "drive-mutations" { passthru.runs = map failed mutants; } (''

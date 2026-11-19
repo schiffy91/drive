@@ -35,7 +35,10 @@ let
   tray = profile.systemd.user.services.drive-tray;
 in assert tray.wantedBy == [ "graphical-session.target" ] && pkgs.lib.hasSuffix "/bin/drive-tray" tray.serviceConfig.ExecStart
   && tray.environment.DRIVE_RUNTIME == "/run/drive" && tray.environment.DRIVE_MOUNT == "${home}/Drive"
-  && profile.services.drive.statePaths == [ "/var/lib/drive" "${home}/.config/drive" ];  # the tray's icon starts with the desktop session and is told where the engine is
+  && profile.services.drive.statePaths == [ "/var/lib/drive" "${home}/.config/drive" ]
+  && !profile.systemd.services.drive-door.restartIfChanged && profile.systemd.services.drive-engine.restartIfChanged
+  && !profile.systemd.services.drive-engine.stopIfChanged
+  && pkgs.lib.hasInfix "X-RestartIfChanged=false" profile.systemd.units."drive-door.service".text;  # a switch leaves the mount up and restarts the engine behind it  # the tray's icon starts with the desktop session and is told where the engine is
 (import ../lib/vm-test.nix { inherit pkgs inputs; }) {
   name = "drive-module";
   nodes.machine = { ... }: {
