@@ -150,9 +150,9 @@ class StorePaths {  // the calls on paths the store needs
     // A directory's entries, each with its kind as the first character of its name: d a folder, l a link,
     // f anything else. The kinds come with the listing, so a tree of hundreds of thousands of files is
     // walked without a call per file.
-    class Vector<string> kinds(string path) {
+    class Vector<string> kinds(string path, bool foldersOnly = false) {
         Vector<string> entries = [];
-        DriveBufferHandle? buffer = driveListKinds(path);
+        DriveBufferHandle? buffer = driveListKinds(path, foldersOnly ? 1 : 0);
         if (buffer == null) { return entries; }
         Bytes? listed = driveBufferBytes(buffer);
         if (listed == null) { return entries; }
@@ -164,6 +164,8 @@ class StorePaths {  // the calls on paths the store needs
         }
         return entries;
     }
+
+    class long long count(string path) { return driveCountEntries(path); }  // entries of a directory, without a name made for each; -1 unreadable
 
     class string formatLocalTime(long long seconds) {
         DriveTextHandle? text = driveFormatLocalTime(seconds);

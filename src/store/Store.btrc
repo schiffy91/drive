@@ -518,10 +518,15 @@ class Store {
         for (int index = 0; index < self.attached.len; index++) { self.attached.set(index, false); }
         self.attend();
         self.files = 0;
-        for bucket in FileSystem.listDir(self.root + "/ids") { self.files += FileSystem.listDir(f"{self.root}/ids/{bucket}").len; }
+        for bucket in FileSystem.listDir(self.root + "/ids") { self.files += self.counted(f"{self.root}/ids/{bucket}"); }
         for location in self.volumes.locations {
-            for bucket in FileSystem.listDir(location + "/ids") { self.files += FileSystem.listDir(f"{location}/ids/{bucket}").len; }
+            for bucket in FileSystem.listDir(location + "/ids") { self.files += self.counted(f"{location}/ids/{bucket}"); }
         }
+    }
+
+    private int counted(string directory) {  // its entries, counted without a name made for each
+        long long entries = StorePaths.count(directory);
+        return entries < 0LL ? 0 : (int)entries;
     }
 
     private void carry(StoreFile from, StoreFile to) {
@@ -773,8 +778,7 @@ class Store {
     public string journal(string name) { return f"{self.root}/dirty/{name}"; }
 
     private void scanBelow(string path) {
-        for entry in StorePaths.kinds(path) {
-            if (!entry.startsWith("d")) { continue; }  // a folder, said by the listing: no look at each of the files
+        for entry in StorePaths.kinds(path, true) {  // the folders alone, said by the listing: nothing is made or asked for each of the files
             string child = f"{path}/{entry.substring(1, entry.len() - 1)}";
             int placed = self.volumes.holding(self.logical(child));
             if (placed >= 0 && child.equals(self.volumes.stand(placed))) { continue; }  // a stand-in: its folder is found on its volume

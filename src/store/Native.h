@@ -327,8 +327,9 @@ static inline DriveBufferHandle driveReadAllBytes(const char* path) {
 
 // A directory's entries with their kinds, as the directory itself gives them: for each, one character (d
 // a folder, l a link, f anything else), the name and a zero byte. A filesystem that does not say the
-// kind is asked once for that entry. Null when the directory cannot be read.
-static inline DriveBufferHandle driveListKinds(const char* path) {
+// kind is asked once for that entry. Null when the directory cannot be read. With foldersOnly nothing
+// else is given back: a walk of the folders then makes nothing for each of the files beside them.
+static inline DriveBufferHandle driveListKinds(const char* path, int foldersOnly) {
 	DIR* directory = opendir(path);
 	if (!directory) { return NULL; }
 	DriveBufferHandle handle = calloc(1, sizeof(*handle));
@@ -342,6 +343,7 @@ static inline DriveBufferHandle driveListKinds(const char* path) {
 			struct stat found;
 			if (fstatat(dirfd(directory), name, &found, AT_SYMLINK_NOFOLLOW) == 0) { kind = S_ISDIR(found.st_mode) ? 'd' : S_ISLNK(found.st_mode) ? 'l' : 'f'; }
 		}
+		if (foldersOnly && kind != 'd') { continue; }
 		size_t need = strlen(name) + 2;
 		if (handle->length + need > capacity) {
 			capacity = (capacity + need) * 2;
@@ -360,6 +362,21 @@ static inline DriveBufferHandle driveListKinds(const char* path) {
 	}
 	closedir(directory);
 	return handle;
+}
+
+// How many entries a directory has; -1 when it cannot be read.
+static inline long long driveCountEntries(const char* path) {
+	DIR* directory = opendir(path);
+	if (!directory) { return -1; }
+	long long count = 0;
+	struct dirent* entry;
+	while ((entry = readdir(directory)) != NULL) {
+		const char* name = entry->d_name;
+		if (name[0] == '.' && (name[1] == 0 || (name[1] == '.' && name[2] == 0))) { continue; }
+		count++;
+	}
+	closedir(directory);
+	return count;
 }
 
 static inline int driveLink(const char* existing, const char* created) { return link(existing, created); }
