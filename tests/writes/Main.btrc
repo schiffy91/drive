@@ -30,6 +30,7 @@ class WritesScenario {
         self.drive.put("root", "both2.txt", "text");
         self.drive.put("root", "gone.txt", "text");
         self.drive.put("root", "during.bin", "cloud.bin");
+        self.drive.put("root", "after.bin", "cloud.bin");
         for folder in ["Bulk", "Back", "Theirs", "Unbraked", "Whole"] {
             string id = self.drive.folder("root", folder);
             for (int number = 1; number <= 5; number++) { self.drive.put(id, f"b{number}.txt", "text"); }
@@ -235,6 +236,15 @@ class WritesScenario {
         self.drive.control("slow?milliseconds=0");
         self.machine.waitUntil(f"drive status --runtime {self.drive.runtime} | grep -q ' 0 changes to send'");
         Check.that(!self.drive.remote("s16.txt").isEmpty() && !self.drive.remote("s9.txt").isEmpty(), "the whole batch arrives");
+
+        print("A long batch of renames keeps the engine from nothing either");
+        self.drive.control("slow?milliseconds=1500&on=update");  // sixteen renames, each a request of a second and a half that the engine itself waits for
+        self.machine.succeed(f"for n in $(seq 1 16); do mv {self.mount}/Batch/s$n.txt {self.mount}/Batch/t$n.txt; done");
+        self.machine.waitUntil(f"curl -sS -X POST '{self.drive.fake}/__control/dump' | python3 /var/lib/drive-test/entries.py t1.txt | grep -q .", 60);
+        self.machine.succeed(f"timeout 8 cat {self.mount}/after.bin > /dev/null");  // not downloaded: the engine fetches it between two renames
+        self.drive.control("slow?milliseconds=0");
+        self.machine.waitUntil(f"drive status --runtime {self.drive.runtime} | grep -q ' 0 changes to send'", 90);
+        Check.that(!self.drive.remote("t16.txt").isEmpty() && self.drive.remote("s16.txt").isEmpty(), "and every rename arrives");
     }
 
     public void check() {

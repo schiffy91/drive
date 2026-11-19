@@ -48,8 +48,8 @@ let
       rule = "the engine answers the mount and commands between the files of a batch";
       scenario = ../writes;
       mutation = cut "engine/Uploader.btrc" "worked > 0 && MonotonicClock.milliseconds() >= until" "worked < 0 && MonotonicClock.milliseconds() >= until";
-      at = "A long batch on its way up keeps the engine from nothing else";
-      sees = "FAIL: machine: timeout 8 cat /mnt/drive/during.bin";
+      at = "A long batch of renames keeps the engine from nothing either";
+      sees = "FAIL: machine: timeout 8 cat /mnt/drive/after.bin";
     }
     {
       rule = "deletions held here are written down for the engine that starts next";

@@ -46,6 +46,7 @@ class FakeDrive {
     private string stallOn = "";  // "upload" or "download": the next one waits before it is answered, so a test can stop the client in the middle
     private int stallSeconds = 0;
     private int slowMilliseconds = 0;  // every upload takes this long, as on a slow line
+    private bool slowUpdates = false;  // with `on=update` it is every rename and move that takes that long
     private int cutBytes = -1;  // the next sending is cut off after this many bytes, as when the line drops
     private bool cutThenFails = false;
     private int failures = 0;
@@ -252,6 +253,7 @@ class FakeDrive {
         }
         self.apply(found, JSONValue.parse(request.body));
         self.changed(found);
+        if (self.slowUpdates && self.slowMilliseconds > 0) { Timer.sleepMillis(self.slowMilliseconds); }
         return HTTPResponse.json(self.describe(found).stringify());
     }
 
@@ -337,7 +339,7 @@ class FakeDrive {
             self.stallOn = "";
             Timer.sleepMillis(self.stallSeconds * 1000);
         }
-        if (self.slowMilliseconds > 0) { Timer.sleepMillis(self.slowMilliseconds); }
+        if (self.slowMilliseconds > 0 && !self.slowUpdates) { Timer.sleepMillis(self.slowMilliseconds); }
         if (self.lost > 0) {
             self.lost--;
             return self.refuse(self.lostStatus, self.lostStatus >= 500 ? "backendError" : "badRequest", "The fake did the upload and lost its answer");
@@ -381,6 +383,7 @@ class FakeDrive {
             self.stallSeconds = query.getOrDefault("seconds", "5").toInt();
         } else if (action.equals("slow")) {
             self.slowMilliseconds = query.getOrDefault("milliseconds", "0").toInt();
+            self.slowUpdates = query.getOrDefault("on", "upload").equals("update");
         } else if (action.equals("cut")) {
             self.cutBytes = query.getOrDefault("bytes", "0").toInt();
             self.cutThenFails = query.getOrDefault("then", "").equals("fail");  // and nothing is answered after it, until `fail?count=0`
