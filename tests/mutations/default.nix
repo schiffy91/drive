@@ -52,6 +52,13 @@ let
       sees = "FAIL: machine: timeout 8 cat /mnt/drive/after.bin";
     }
     {
+      rule = "a file deleted here while its own new content is on its way stays deleted";
+      scenario = ../writes;
+      mutation = cut "engine/Uploader.btrc" "if (self.flight != null && id.equals(self.flightId)) { return false; }" "";
+      at = "A file deleted or renamed here while its new content is on its way is not taken for one the Drive changed";
+      sees = "timed out waiting for drive status --runtime /run/drive-test | grep -q ' 0 changes to send' && ! test -e /mnt/drive/leaving.txt";
+    }
+    {
       rule = "deletions held here are written down for the engine that starts next";
       scenario = ../held;
       mutation = cut "engine/Uploader.btrc" ''for id in self.removals { lines.push(f"removed {id}"); }'' "";

@@ -30,6 +30,7 @@ class Uploader {
     private string flightPath = "";
     private string flightBefore = "";  // the file's shape when the sending began: a write since then is a change still to send
     private bool flightNew = false;  // a new file, as against new content for one the Drive has
+    private string flightId = "";  // the Drive's id of the file on its way; none for a new one
     public string machine = "this-machine";
     public Vector<string> ignored = [];  // names kept here and never sent: "*.part", ".~lock.*", an exact name
     public int quietSeconds = 5;
@@ -317,8 +318,9 @@ class Uploader {
         string full = self.store.real(path);
         StoreFile? opened = FileSystem.isSymlink(full) || !FileSystem.exists(full) ? null : StoreFile.open(full);
         if (!self.flightNew) {
-            if (opened == null) { return; }  // deleted here meanwhile: its deletion is on the list and trashes it there
-            StoreFile held = opened;
+            StoreFile? known = self.store.file(sent.id);  // by its id: renamed or deleted here meanwhile, it is the same file under its new name or in the trash
+            if (known == null) { return; }
+            StoreFile held = known;  // the revision is written down all the same, or what was sent would later look like a change made on the Drive
             held.setAttribute("revision", sent.revision);
             held.setAttribute("version", f"{sent.version}");
             held.setAttribute("sha256", sent.sha256);
@@ -351,6 +353,7 @@ class Uploader {
         self.flightPath = path;
         self.flightBefore = before;
         self.flightNew = id.isEmpty();
+        self.flightId = id;
         return false;
     }
 
@@ -376,6 +379,7 @@ class Uploader {
         string local = PathTools.basename(path);
         string name = local.replace("∕", "/");
         string id = held.attribute("id");
+        if (self.flight != null && !id.isEmpty() && id.equals(self.flightId)) { return false; }  // renamed while its content is on its way
         bool folder = FileSystem.isDir(full);
         if (id.isEmpty() && folder) {
             DriveFile? made = self.arrived(path, parent, name, held, true);
@@ -445,6 +449,7 @@ class Uploader {
 
     // Trash on the Drive what was deleted here. True when there is nothing more to do for it.
     private bool remove(string id) {
+        if (self.flight != null && id.equals(self.flightId)) { return false; }  // its own content is on its way: what the Drive makes of that is not a change made there
         string kept = self.store.trashed(id);
         StoreFile? held = StoreFile.open(kept);
         DriveFile? remote = self.api.file(id);

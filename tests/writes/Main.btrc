@@ -211,12 +211,15 @@ class WritesScenario {
         Check.that(self.drive.onDrive("later.txt", self.drive.sha(self.mount + "/later.txt")), "nothing written meanwhile is lost");
     }
 
+    // Whether a file is on its way: the engine's curl is beside it. The machine is asked and not the fake Drive,
+    // which answers one request at a time and would only say so once the file had arrived.
+    private string sending() { return "pgrep -P \"$(systemctl show -p MainPID --value drive-engine.service)\" -f upload-file > /dev/null"; }
+
     private void whileSending() {
         print("One long file on its way up keeps the engine from nothing");
-        self.drive.control("log?clear=1");
         self.drive.control("slow?milliseconds=8000");  // the Drive takes eight seconds over this one file
         self.machine.succeed(f"echo long > {self.mount}/long.txt");
-        self.machine.waitUntil(f"curl -sS -X POST '{self.drive.fake}/__control/log' | grep -q 'sent .* from 0'", 60);
+        self.machine.waitUntil(self.sending(), 60);
         string during = self.machine.succeed(f"timeout 1 drive status --runtime {self.drive.runtime}");  // the engine itself answers, within a second, while its curl waits
         Check.that(during.startsWith("online") && !during.contains(" 0 changes to send"), f"the engine answers while the file is still on its way: {during.trim()}");
         Check.that(self.drive.remote("long.txt").isEmpty() || !during.contains(" 0 changes to send"), "and counts it as still to send");
@@ -248,6 +251,26 @@ class WritesScenario {
         Check.that(!self.drive.remote("t16.txt").isEmpty() && self.drive.remote("s16.txt").isEmpty(), "and every rename arrives");
     }
 
+    private void goneWhileSending() {
+        print("A file deleted or renamed here while its new content is on its way is not taken for one the Drive changed");
+        self.machine.succeed(f"echo first > {self.mount}/leaving.txt && echo first > {self.mount}/moving.txt");
+        self.machine.waitUntil(f"test -n \"$(getfattr --absolute-names -n user.drive.id --only-values {self.drive.store}/tree/leaving.txt 2>/dev/null)\" && test -n \"$(getfattr --absolute-names -n user.drive.id --only-values {self.drive.store}/tree/moving.txt 2>/dev/null)\"", 60);
+        self.drive.control("slow?milliseconds=6000");  // the Drive has the new content at once and takes six seconds to say so
+        self.machine.succeed(f"echo second > {self.mount}/leaving.txt");
+        self.machine.waitUntil(self.sending(), 60);
+        self.machine.succeed(f"rm {self.mount}/leaving.txt");
+        self.machine.waitUntil(f"drive status --runtime {self.drive.runtime} | grep -q ' 0 changes to send' && ! test -e {self.mount}/leaving.txt && curl -sS -X POST '{self.drive.fake}/__control/dump' | python3 /var/lib/drive-test/entries.py leaving.txt | grep -q ' True$'", 60);
+        Check.that(true, "the deleted file stays deleted here and goes to the Drive's trash");
+        self.machine.succeed(f"echo second > {self.mount}/moving.txt");
+        self.machine.waitUntil(self.sending(), 60);
+        self.machine.succeed(f"mv {self.mount}/moving.txt {self.mount}/moved.txt");
+        self.drive.control("slow?milliseconds=0");
+        self.machine.waitUntil(f"drive status --runtime {self.drive.runtime} | grep -q ' 0 changes to send' && curl -sS -X POST '{self.drive.fake}/__control/dump' | python3 /var/lib/drive-test/entries.py moved.txt | grep -q ' False$'", 60);
+        Check.equal(self.machine.succeed(f"sleep 3; ls {self.mount} | grep -c '^mov' || true").trim(), "1", "the renamed file is one file here, with no conflict copy beside it");
+        Check.that(self.drive.onDrive("moved.txt", self.drive.sha(self.mount + "/moved.txt")) && self.drive.remote("moving.txt").isEmpty(), "and one file on the Drive, under its new name and with its new content");
+    }
+
+
     public void check() {
         self.prepare();
         self.goUp();
@@ -256,6 +279,7 @@ class WritesScenario {
         self.brakes();
         self.whileStopped();
         self.whileSending();
+        self.goneWhileSending();
     }
 }
 
